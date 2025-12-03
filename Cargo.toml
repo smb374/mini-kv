@@ -1,0 +1,27 @@
+[package]
+name = "mini-kv"
+version = "0.1.0"
+edition = "2024"
+authors = ["Po-Yeh Chen <snlk374@gmail.com>"]
+license-file = "LICENSE"
+
+[profile.release]
+debug = true
+
+[dependencies]
+crossbeam = "^0.8"
+mio = {version = "^1.1", features = ["net", "os-poll", "os-ext"]}
+nom = "^8"
+twox-hash = "^2.1"
+shuttle = { version = "^0.8", optional=true }
+
+[features]
+shuttle = ["dep:shuttle"]
+
+[[bin]]
+name = "kv_client"
+path = "src/client/main.rs"
+
+[[bin]]
+name = "kv_server"
+path = "src/server/main.rs"
