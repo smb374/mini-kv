@@ -1,5 +1,5 @@
 use crate::sync::{
-    Arc, Mutex,
+    Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
@@ -27,8 +27,8 @@ struct Bucket<K, V> {
 
 struct ConcurrentHashTable<K, V> {
     next: Atomic<Self>,
-    segments: Arc<[Segment]>,
-    buckets: Arc<[Bucket<K, V>]>,
+    segments: Box<[Segment]>,
+    buckets: Box<[Bucket<K, V>]>,
     mask: u64,
     nsegs: u64,
     overflow_size: u64,
@@ -59,11 +59,11 @@ impl<K, V> ConcurrentHashTable<K, V> {
         let nsegs = len / SEGMENT_SIZE + (len % SEGMENT_SIZE != 0) as u64;
         Self {
             next: Atomic::null(),
-            segments: Arc::from_iter((0..nsegs).map(|_| Segment {
+            segments: Box::from_iter((0..nsegs).map(|_| Segment {
                 lock: Mutex::new(()),
                 ts: AtomicU64::new(0),
             })),
-            buckets: Arc::from_iter((0..len).map(|_| Bucket {
+            buckets: Box::from_iter((0..len).map(|_| Bucket {
                 hop: AtomicU64::new(0),
                 in_use: AtomicBool::new(false),
                 slot: Atomic::null(),
@@ -493,6 +493,7 @@ where
 #[cfg(all(not(feature = "shuttle"), test))]
 mod tests {
     use super::*;
+    use crate::sync::Arc;
 
     const KEYS_PER_THREAD: usize = 10000;
     #[test]
@@ -541,12 +542,12 @@ mod tests {
                 let map2 = Arc::clone(&map);
 
                 let t1 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map1.find_or_insert(1, 100, &guard).clone()
                 });
 
                 let t2 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map2.find_or_insert(2, 200, &guard).clone()
                 });
 
@@ -558,7 +559,7 @@ mod tests {
                 assert_eq!(r2, (2, 200));
 
                 // Verify both entries are visible
-                let guard = crossbeam_epoch::pin();
+                let guard = crossbeam::epoch::pin();
                 let v1 = map.lookup(&1, &guard);
                 let v2 = map.lookup(&2, &guard);
 
@@ -581,12 +582,12 @@ mod tests {
                 let map2 = Arc::clone(&map);
 
                 let t1 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map1.find_or_insert(1, 100, &guard).clone()
                 });
 
                 let t2 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map2.find_or_insert(1, 200, &guard).clone()
                 });
 
@@ -598,7 +599,7 @@ mod tests {
                 assert!(r1 == (1, 100) || r1 == (1, 200));
 
                 // Verify only one entry exists
-                let guard = crossbeam_epoch::pin();
+                let guard = crossbeam::epoch::pin();
                 let v = map.lookup(&1, &guard);
                 assert!(v.is_some());
                 assert_eq!(*v.unwrap(), r1);
@@ -617,12 +618,12 @@ mod tests {
                 let map2 = Arc::clone(&map);
 
                 let t1 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map1.find_or_insert(1, 100, &guard).clone()
                 });
 
                 let t2 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     map2.lookup(&1, &guard).copied()
                 });
 
@@ -638,7 +639,7 @@ mod tests {
                 }
 
                 // After both operations, entry must exist
-                let guard = crossbeam_epoch::pin();
+                let guard = crossbeam::epoch::pin();
                 let final_lookup = map.lookup(&1, &guard);
                 assert!(final_lookup.is_some());
                 assert_eq!(final_lookup.unwrap().1, 100);
@@ -660,28 +661,28 @@ mod tests {
                 let map4 = Arc::clone(&map);
 
                 let t1 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 0..2048 {
                         map1.find_or_insert(i, i * 10, &guard);
                     }
                 });
 
                 let t2 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 2048..4096 {
                         map2.find_or_insert(i, i * 10, &guard);
                     }
                 });
 
                 let t3 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 4096..6144 {
                         map3.find_or_insert(i, i * 10, &guard);
                     }
                 });
 
                 let t4 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 6144..8192 {
                         map4.find_or_insert(i, i * 10, &guard);
                     }
@@ -693,7 +694,7 @@ mod tests {
                 t4.join().unwrap();
 
                 // Verify all entries are visible
-                let guard = crossbeam_epoch::pin();
+                let guard = crossbeam::epoch::pin();
                 for i in 0..8192 {
                     let val = map.lookup(&i, &guard);
                     assert!(val.is_some(), "Key {} should exist", i);
@@ -717,14 +718,14 @@ mod tests {
 
                 // Pre-insert some values to establish baseline
                 {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 0..100 {
                         map.find_or_insert(i, i * 10, &guard);
                     }
                 }
 
                 let t1 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     // Trigger multiple migrations with many inserts
                     for i in 1000..3048 {
                         map1.find_or_insert(i, i * 10, &guard);
@@ -732,21 +733,21 @@ mod tests {
                 });
 
                 let t2 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 3048..5096 {
                         map2.find_or_insert(i, i * 10, &guard);
                     }
                 });
 
                 let t3 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     for i in 5096..7144 {
                         map3.find_or_insert(i, i * 10, &guard);
                     }
                 });
 
                 let t4 = thread::spawn(move || {
-                    let guard = crossbeam_epoch::pin();
+                    let guard = crossbeam::epoch::pin();
                     // Continuously lookup old values during migration
                     let mut results = Vec::new();
                     for _ in 0..100 {
