@@ -460,7 +460,12 @@ where
         }
     }
 
-    pub fn find_or_insert<'a>(&self, key: K, val: V, guard: &'a epoch::Guard) -> &'a (K, V) {
+    pub fn find_or_insert<'a>(
+        &self,
+        key: K,
+        val: V,
+        guard: &'a epoch::Guard,
+    ) -> (&'a (K, V), bool) {
         let node = epoch::Owned::new((key, val)).into_shared(guard);
         let mut active = self.active.load(Ordering::Acquire, guard);
         let res;
@@ -499,7 +504,7 @@ where
             self.epoch.fetch_add(1, Ordering::Release);
         }
 
-        res.0
+        res
     }
 }
 

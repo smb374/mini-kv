@@ -8,8 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::BufMut;
 use crossbeam::channel::{self, Receiver, Sender};
+use mini_kv::{
+    command,
+    proto::{self, ProtocolData},
+    store::Store,
+};
 use mio::{Events, Interest, Poll, Token, Waker, event::Event, net::TcpListener};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal};
 use slab::Slab;
@@ -48,6 +52,7 @@ pub struct Server {
     workers: Vec<Worker>,
     next_worker: usize,
     expiry: VecDeque<usize>,
+    _store: Arc<Store>,
 }
 
 impl Server {
@@ -70,10 +75,12 @@ impl Server {
         WAKER.get_or_init(|| waker);
 
         let mut workers = Vec::with_capacity(nworkers);
+        let store = Arc::new(Store::new());
 
         for _ in 0..nworkers {
             let (tx, rx) = channel::unbounded();
-            let handle = thread::spawn(move || worker_f(rx));
+            let cstore = Arc::clone(&store);
+            let handle = thread::spawn(move || worker_f(cstore, rx));
             workers.push(Worker { tx, handle });
         }
 
@@ -84,6 +91,7 @@ impl Server {
             workers,
             next_worker: 0,
             expiry: VecDeque::with_capacity(4096),
+            _store: store,
         })
     }
 
@@ -207,7 +215,7 @@ impl Server {
     }
 }
 
-fn worker_f(rx: Receiver<Work>) {
+fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
     loop {
         match rx.recv() {
             Ok(Work::HandleConnection((ev, state))) => {
@@ -230,7 +238,7 @@ fn worker_f(rx: Receiver<Work>) {
                         continue;
                     }
                 }
-                process_reqs(state);
+                process_reqs(&store, state);
                 if ev.is_writable() {
                     if state.write_sock().is_err() {
                         let s = guard.take();
@@ -246,11 +254,42 @@ fn worker_f(rx: Receiver<Work>) {
     }
 }
 
-// TODO: Replace with actual logic, currently just echo.
-fn process_reqs(state: &mut ConnState) {
+fn process_reqs(store: &Store, state: &mut ConnState) {
     if !state.read_buf.is_empty() {
-        let dat = state.read_buf.split();
-        state.write_buf.put(dat);
+        let mut datav: Vec<ProtocolData> = Vec::new();
+        loop {
+            let sz = state.read_buf.len();
+            match proto::parse_protocol(&state.read_buf) {
+                Ok((left, dat)) => {
+                    let processed = sz - left.len();
+                    let _ = state.read_buf.split_to(processed);
+                    datav.push(dat);
+                }
+                Err(e) => match e {
+                    nom::Err::Incomplete(_) => break,
+                    _ => {
+                        datav.push(ProtocolData::SimpleError(Arc::from(
+                            format!("Failed to parse protocol: {}", e).as_str(),
+                        )));
+                        break;
+                    }
+                },
+            }
+        }
+        datav
+            .into_iter()
+            .map(|dat| {
+                if let Some(cmd) = command::parse_command(&dat) {
+                    store.handle(&cmd)
+                } else {
+                    if let ProtocolData::SimpleError(_) = &dat {
+                        dat
+                    } else {
+                        ProtocolData::SimpleError(Arc::from("Invalid protocol data for command"))
+                    }
+                }
+            })
+            .for_each(|r| r.encode(&mut state.write_buf));
     }
 }
 

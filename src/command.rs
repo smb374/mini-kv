@@ -8,7 +8,7 @@ pub enum Command {
     },
     Set {
         key: Arc<str>,
-        val: Arc<str>,
+        val: Arc<[u8]>,
     },
     Del {
         key: Arc<str>,
@@ -48,66 +48,84 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
         return None;
     };
 
-    let mut cow_args: Vec<Arc<str>> = Vec::new();
+    let mut valid_args: Vec<Arc<[u8]>> = Vec::new();
     for a in args.iter() {
-        let ProtocolData::BulkString(Some(b)) = a else {
+        let ProtocolData::BulkString(Some(s)) = a else {
             break;
         };
-        let s = String::from_utf8_lossy(b.as_ref());
-        cow_args.push(Arc::from(s.as_ref()));
+        valid_args.push(Arc::clone(s));
     }
-    if cow_args.is_empty() {
+    if valid_args.is_empty() {
         return None;
     }
-    Arc::make_mut(&mut cow_args[0]).make_ascii_uppercase();
+    let mut cmd = String::from_utf8_lossy(valid_args[0].as_ref());
+    cmd.to_mut().make_ascii_uppercase();
 
-    match cow_args[0].as_ref() {
-        "GET" => Some(Command::Get {
-            key: Arc::clone(&cow_args[1]),
+    match cmd.as_ref() {
+        "GET" if valid_args.len() >= 2 => Some(Command::Get {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
         }),
-        "SET" => Some(Command::Set {
-            key: Arc::clone(&cow_args[1]),
-            val: Arc::clone(&cow_args[2]),
+        "SET" if valid_args.len() >= 3 => Some(Command::Set {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            val: Arc::clone(&valid_args[2]),
         }),
-        "DEL" => Some(Command::Del {
-            key: Arc::clone(&cow_args[1]),
+        "DEL" if valid_args.len() >= 2 => Some(Command::Del {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
         }),
         "KEYS" => Some(Command::Keys),
-        "PEXPIRE" => u64::from_str_radix(cow_args[2].as_ref(), 10)
-            .ok()
-            .map(|x| Command::Pexpire {
-                key: Arc::clone(&cow_args[1]),
-                expire_ms: x,
-            }),
-        "PTTL" => Some(Command::Pttl {
-            key: Arc::clone(&cow_args[1]),
+        "PEXPIRE" if valid_args.len() >= 3 => {
+            u64::from_str_radix(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref(), 10)
+                .ok()
+                .map(|x| Command::Pexpire {
+                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    expire_ms: x,
+                })
+        }
+        "PTTL" if valid_args.len() >= 2 => Some(Command::Pttl {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
         }),
-        "ZADD" => f64::from_str(cow_args[2].as_ref())
-            .ok()
-            .map(|x| Command::Zadd {
-                key: Arc::clone(&cow_args[1]),
-                score: x,
-                name: Arc::clone(&cow_args[3]),
-            }),
-        "ZSCORE" => Some(Command::Zscore {
-            key: Arc::clone(&cow_args[1]),
-            name: Arc::clone(&cow_args[2]),
+        "ZADD" if valid_args.len() >= 4 => {
+            f64::from_str(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref())
+                .ok()
+                .map(|x| Command::Zadd {
+                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    score: x,
+                    name: Arc::from(String::from_utf8_lossy(valid_args[3].as_ref())),
+                })
+        }
+        "ZSCORE" if valid_args.len() >= 3 => Some(Command::Zscore {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            name: Arc::from(String::from_utf8_lossy(valid_args[2].as_ref())),
         }),
-        "ZREM" => Some(Command::Zrem {
-            key: Arc::clone(&cow_args[1]),
-            name: Arc::clone(&cow_args[2]),
+        "ZREM" if valid_args.len() >= 3 => Some(Command::Zrem {
+            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            name: Arc::from(String::from_utf8_lossy(valid_args[2].as_ref())),
         }),
-        "ZQUERY" => f64::from_str(cow_args[2].as_ref())
-            .ok()
-            .zip(i64::from_str_radix(cow_args[4].as_ref(), 10).ok())
-            .zip(usize::from_str_radix(cow_args[5].as_ref(), 10).ok())
-            .map(|((x, y), z)| Command::Zquery {
-                key: Arc::clone(&cow_args[1]),
-                score: x,
-                name: Arc::clone(&cow_args[3]),
-                offset: y,
-                limit: z,
-            }),
+        "ZQUERY" if valid_args.len() >= 6 => {
+            f64::from_str(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref())
+                .ok()
+                .zip(
+                    i64::from_str_radix(
+                        String::from_utf8_lossy(valid_args[4].as_ref()).as_ref(),
+                        10,
+                    )
+                    .ok(),
+                )
+                .zip(
+                    usize::from_str_radix(
+                        String::from_utf8_lossy(valid_args[5].as_ref()).as_ref(),
+                        10,
+                    )
+                    .ok(),
+                )
+                .map(|((x, y), z)| Command::Zquery {
+                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    score: x,
+                    name: Arc::from(String::from_utf8_lossy(valid_args[3].as_ref())),
+                    offset: y,
+                    limit: z,
+                })
+        }
         _ => None,
     }
 }
