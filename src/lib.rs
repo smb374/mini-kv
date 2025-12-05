@@ -1,7 +1,8 @@
 pub mod hashtable;
+pub mod proto;
 
 #[cfg(all(feature = "shuttle", test))]
-pub use shuttle::{hint, sync, thread};
+pub(crate) use shuttle::{sync, thread};
 
 #[cfg(not(all(feature = "shuttle", test)))]
-pub use std::{hint, sync, thread};
+pub(crate) use std::{sync, thread};

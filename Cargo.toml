@@ -9,11 +9,14 @@ license-file = "LICENSE"
 debug = true
 
 [dependencies]
+bytes = "^1"
 crossbeam = "^0.8"
-mio = {version = "^1.1", features = ["net", "os-poll", "os-ext"]}
+mio = { version = "^1.1", features = ["net", "os-poll", "os-ext"] }
+nix = { version = "^0.30", default-features = false, features = ["signal"] }
 nom = "^8"
+slab = "^0.4"
 twox-hash = "^2.1"
-shuttle = { version = "^0.8", optional=true }
+shuttle = { version = "^0.8", optional = true }
 
 [features]
 shuttle = ["dep:shuttle"]
