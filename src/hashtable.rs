@@ -176,17 +176,6 @@ where
 
     fn find_or_insert<'a>(
         &self,
-        key: K,
-        val: V,
-        guard: &'a epoch::Guard,
-    ) -> Result<&'a (K, V), ()> {
-        let node = epoch::Owned::new((key, val));
-        let nref = node.into_shared(guard);
-        self.find_or_insert_internal(nref, guard).map(|x| x.0)
-    }
-
-    fn find_or_insert_internal<'a>(
-        &self,
         node: epoch::Shared<'a, (K, V)>,
         guard: &'a epoch::Guard,
     ) -> Result<(&'a (K, V), bool), ()> {
@@ -257,6 +246,41 @@ where
         }
 
         Err(())
+    }
+
+    fn fold<S, F>(&self, state: &mut S, mut f: F) -> bool
+    where
+        F: FnMut(&mut S, &(K, V)) -> bool,
+    {
+        let guard = &epoch::pin();
+        for seg in 0..self.nsegs {
+            let start = seg * SEGMENT_SIZE;
+            let mut ts_before = self.segments[seg as usize].ts.load(Ordering::Acquire);
+            for i in 0..SEGMENT_SIZE {
+                let idx = (start + i) as usize;
+                if idx >= self.buckets.len() {
+                    break;
+                }
+                loop {
+                    let node = self.buckets[idx].slot.load(Ordering::Acquire, guard);
+                    if let Some(nref) = unsafe { node.as_ref() } {
+                        // Get existing node ATM, run f over it
+                        if !f(state, nref) {
+                            return false;
+                        }
+                    } else {
+                        // Check if insert happens, if yes then reload slot.
+                        let ts_after = self.segments[seg as usize].ts.load(Ordering::Acquire);
+                        if ts_before != ts_after {
+                            ts_before = ts_after;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        true
     }
 
     fn find_closer_bucket(
@@ -372,7 +396,7 @@ where
                 .slot
                 .load(Ordering::Relaxed, guard);
             if !node.is_null() {
-                nref.find_or_insert_internal(node, guard)
+                nref.find_or_insert(node, guard)
                     .expect("Migrate insert should always success");
             }
         }
@@ -478,7 +502,7 @@ where
                 continue;
             }
 
-            if let Ok(r) = tref.find_or_insert_internal(node, guard) {
+            if let Ok(r) = tref.find_or_insert(node, guard) {
                 res = r;
                 break;
             }
@@ -505,6 +529,24 @@ where
         }
 
         res
+    }
+
+    pub fn fold<S, F>(&self, state: &mut S, f: F) -> bool
+    where
+        F: FnMut(&mut S, &(K, V)) -> bool,
+    {
+        let guard = &epoch::pin();
+        let mut active = self.active.load(Ordering::Acquire, guard);
+        {
+            let tref = unsafe { active.as_ref() }.expect("Active should be always non-null");
+            let nxt = tref.next.load(Ordering::Acquire, guard);
+            if !nxt.is_null() {
+                self.migrate(tref, nxt, guard);
+                active = self.active.load(Ordering::Acquire, guard);
+            }
+        }
+        let tref = unsafe { active.as_ref() }.expect("Active should be always non-null");
+        tref.fold(state, f)
     }
 }
 

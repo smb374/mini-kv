@@ -56,6 +56,15 @@ impl Store {
                     ProtocolData::Integer(0)
                 }
             }
+            Command::Hello => ProtocolData::SimpleString(Arc::from("OK")),
+            Command::Keys => {
+                let keys = self.keys();
+                let v: Box<[ProtocolData]> = keys
+                    .into_iter()
+                    .map(|k| ProtocolData::BulkString(Some(k)))
+                    .collect();
+                ProtocolData::Array(Some(Arc::from(v)))
+            }
             _ => ProtocolData::SimpleError(Arc::from("Command not implemented")),
         }
     }
@@ -87,5 +96,14 @@ impl Store {
     fn del(&self, key: &Arc<str>) -> bool {
         let guard = &epoch::pin();
         self.map.remove(&key, guard).is_some()
+    }
+
+    fn keys(&self) -> Vec<Arc<[u8]>> {
+        let mut keys = Vec::new();
+        self.map.fold(&mut keys, |acc, (k, _)| {
+            acc.push(Arc::from(k.as_bytes()));
+            true
+        });
+        keys
     }
 }

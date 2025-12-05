@@ -24,7 +24,7 @@ const MAX_TOKENS: usize = 0x80000000; // i32 max + 1
 const SERVER_TOKEN: Token = Token(MAX_TOKENS);
 const WAKER_TOKEN: Token = Token(MAX_TOKENS + 1);
 const EVENT_CAPACITY: usize = 4096;
-const CONNECTION_TIMEOUT_MS: u64 = 5000;
+const CONNECTION_TIMEOUT_MS: u64 = 30000;
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 static WAKER: OnceLock<Waker> = OnceLock::new();
@@ -78,7 +78,7 @@ impl Server {
         let store = Arc::new(Store::new());
 
         for _ in 0..nworkers {
-            let (tx, rx) = channel::unbounded();
+            let (tx, rx) = channel::bounded(65536);
             let cstore = Arc::clone(&store);
             let handle = thread::spawn(move || worker_f(cstore, rx));
             workers.push(Worker { tx, handle });
@@ -111,34 +111,36 @@ impl Server {
 
             for ev in events.iter() {
                 match ev.token() {
-                    SERVER_TOKEN => match self.listener.accept() {
-                        Ok((mut conn, addr)) => {
-                            eprintln!("Got connection from {:?}", addr);
-                            let ent = self.conns.vacant_entry();
-                            let key = ent.key();
-                            if key >= MAX_TOKENS {
-                                continue;
+                    SERVER_TOKEN => loop {
+                        match self.listener.accept() {
+                            Ok((mut conn, addr)) => {
+                                eprintln!("Got connection from {:?}", addr);
+                                let ent = self.conns.vacant_entry();
+                                let key = ent.key();
+                                if key >= MAX_TOKENS {
+                                    continue;
+                                }
+
+                                self.poll.registry().register(
+                                    &mut conn,
+                                    Token(key),
+                                    Interest::READABLE | Interest::WRITABLE,
+                                )?;
+
+                                let state = Arc::new(Mutex::new(Some(ConnState::new(conn))));
+                                let ts = get_time();
+                                let conn = Connection {
+                                    last_access: ts,
+                                    expect_expire: ts + CONNECTION_TIMEOUT_MS,
+                                    state,
+                                };
+
+                                ent.insert(conn);
+                                self.expiry.push_back(key);
                             }
-
-                            self.poll.registry().register(
-                                &mut conn,
-                                Token(key),
-                                Interest::READABLE | Interest::WRITABLE,
-                            )?;
-
-                            let state = Arc::new(Mutex::new(Some(ConnState::new(conn))));
-                            let ts = get_time();
-                            let conn = Connection {
-                                last_access: ts,
-                                expect_expire: ts + CONNECTION_TIMEOUT_MS,
-                                state,
-                            };
-
-                            ent.insert(conn);
-                            self.expiry.push_back(key);
+                            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => break,
+                            Err(err) => return Err(err),
                         }
-                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                        Err(err) => return Err(err),
                     },
                     WAKER_TOKEN => break 'outer Ok(()),
                     Token(t) if self.conns.contains(t) => {
@@ -228,10 +230,10 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                 };
 
                 if ev.is_readable() {
-                    let Ok((_, is_eof)) = state.read_sock() else {
+                    let Ok((nread, is_eof)) = state.read_sock() else {
                         continue;
                     };
-                    if is_eof {
+                    if nread == 0 && is_eof {
                         let s = guard.take();
                         eprintln!("Dropping connection with id={}", ev.token().0);
                         drop(s);
@@ -240,7 +242,10 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                 }
                 process_reqs(&store, state);
                 if ev.is_writable() {
-                    if state.write_sock().is_err() {
+                    let Ok((nwrite, is_eof)) = state.write_sock() else {
+                        continue;
+                    };
+                    if nwrite == 0 && is_eof {
                         let s = guard.take();
                         eprintln!("Dropping connection with id={}", ev.token().0);
                         drop(s);

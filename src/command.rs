@@ -14,6 +14,7 @@ pub enum Command {
         key: Arc<str>,
     },
     Keys,
+    Hello,
     Pexpire {
         key: Arc<str>,
         expire_ms: u64,
@@ -73,6 +74,7 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
             key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
         }),
         "KEYS" => Some(Command::Keys),
+        "HELLO" => Some(Command::Hello),
         "PEXPIRE" if valid_args.len() >= 3 => {
             u64::from_str_radix(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref(), 10)
                 .ok()
