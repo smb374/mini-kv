@@ -2,11 +2,11 @@
 name = "mini-kv"
 version = "0.1.0"
 edition = "2024"
-authors = ["Po-Yeh Chen <snlk374@gmail.com>"]
 license-file = "LICENSE"
+readme = "README.md"
 
 [profile.release]
-debug = true
+# debug = true
 
 [dependencies]
 bytes = "^1"
@@ -15,7 +15,7 @@ mio = { version = "^1.1", features = ["net", "os-poll", "os-ext"] }
 nix = { version = "^0.30", default-features = false, features = ["signal"] }
 nom = "^8"
 slab = "^0.4"
-twox-hash = "^2.1"
+twox-hash = { version = "^2.1", default-features = false, features = ["std", "xxhash3_64"] }
 shuttle = { version = "^0.8", optional = true }
 
 [features]

@@ -1,6 +1,4 @@
-use std::{error, fmt};
-
-use crate::sync::Arc;
+use std::{error, fmt, sync::Arc};
 
 use bytes::{BufMut, BytesMut};
 use nom::{

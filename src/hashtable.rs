@@ -1,6 +1,19 @@
-use crate::sync::{
-    Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+#[cfg(all(feature = "shuttle", test))]
+use shuttle::{
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
+};
+
+#[cfg(not(all(feature = "shuttle", test)))]
+use std::{
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
 };
 
 use crossbeam::epoch::{self, Atomic};
@@ -397,7 +410,7 @@ where
         while self.mstarted.load(Ordering::Acquire) && e == self.epoch.load(Ordering::Acquire) {
             if b.is_completed() {
                 let duration = dur.min(10u64);
-                crate::thread::sleep(Duration::from_millis(1 << duration));
+                thread::sleep(Duration::from_millis(1 << duration));
                 dur += 1;
             } else {
                 b.snooze();
@@ -493,16 +506,17 @@ where
 #[cfg(all(not(feature = "shuttle"), test))]
 mod tests {
     use super::*;
-    use crate::sync::Arc;
+    use std::sync::Arc;
+    use std::thread;
 
-    const KEYS_PER_THREAD: usize = 10000;
+    const KEYS_PER_THREAD: usize = 100000;
     #[test]
     fn concurrent_insert_all_present() {
         let map: Arc<ConcurrentHashMap<usize, usize>> = Arc::new(ConcurrentHashMap::new());
         let mut threads = Vec::new();
         for i in 0..8 {
             let cmap = Arc::clone(&map);
-            let h = crate::thread::spawn(move || {
+            let h = thread::spawn(move || {
                 let guard = &epoch::pin();
 
                 let start = i * KEYS_PER_THREAD;
