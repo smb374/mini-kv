@@ -3,14 +3,17 @@ use std::{
     io,
     net::SocketAddr,
     os::raw::c_int,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use crossbeam::channel::{self, Receiver, Sender};
+use crossbeam::{
+    channel::{self, Receiver, Sender},
+    epoch,
+};
 use mini_kv::{
-    command,
+    command, get_time,
     proto::{self, ProtocolData},
     store::Store,
 };
@@ -26,7 +29,6 @@ const WAKER_TOKEN: Token = Token(MAX_TOKENS + 1);
 const EVENT_CAPACITY: usize = 4096;
 const CONNECTION_TIMEOUT_MS: u64 = 30000;
 
-static START_TIME: OnceLock<Instant> = OnceLock::new();
 static WAKER: OnceLock<Waker> = OnceLock::new();
 
 enum Work {
@@ -51,8 +53,10 @@ pub struct Server {
     conns: Slab<Connection>,
     workers: Vec<Worker>,
     next_worker: usize,
-    expiry: VecDeque<usize>,
-    _store: Arc<Store>,
+    conn_expiry: VecDeque<usize>,
+    ent_expiry: VecDeque<(Arc<str>, u64)>,
+    exp_rx: Receiver<(Arc<str>, u64)>,
+    store: Arc<Store>,
 }
 
 impl Server {
@@ -75,7 +79,8 @@ impl Server {
         WAKER.get_or_init(|| waker);
 
         let mut workers = Vec::with_capacity(nworkers);
-        let store = Arc::new(Store::new());
+        let (exp_tx, exp_rx) = channel::bounded(65536);
+        let store = Arc::new(Store::new(exp_tx));
 
         for _ in 0..nworkers {
             let (tx, rx) = channel::bounded(65536);
@@ -90,8 +95,10 @@ impl Server {
             conns: Slab::with_capacity(4096),
             workers,
             next_worker: 0,
-            expiry: VecDeque::with_capacity(4096),
-            _store: store,
+            conn_expiry: VecDeque::with_capacity(4096),
+            ent_expiry: VecDeque::with_capacity(4096),
+            exp_rx,
+            store,
         })
     }
 
@@ -113,8 +120,7 @@ impl Server {
                 match ev.token() {
                     SERVER_TOKEN => loop {
                         match self.listener.accept() {
-                            Ok((mut conn, addr)) => {
-                                eprintln!("Got connection from {:?}", addr);
+                            Ok((mut conn, _addr)) => {
                                 let ent = self.conns.vacant_entry();
                                 let key = ent.key();
                                 if key >= MAX_TOKENS {
@@ -136,7 +142,7 @@ impl Server {
                                 };
 
                                 ent.insert(conn);
-                                self.expiry.push_back(key);
+                                self.conn_expiry.push_back(key);
                             }
                             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => break,
                             Err(err) => return Err(err),
@@ -159,7 +165,24 @@ impl Server {
                     }
                 }
             }
-            timeout_ms = self.process_expiry();
+            let nts1 = self.process_conn_expiry();
+            let nts2 = self.process_ent_expiry();
+            timeout_ms = nts1.min(nts2);
+            // At most 1024 receives to mitigate churns
+            for _ in 0..1024 {
+                match self.exp_rx.try_recv() {
+                    Ok(item) => self.ent_expiry.push_back(item),
+                    Err(e) => match e {
+                        channel::TryRecvError::Empty => break,
+                        channel::TryRecvError::Disconnected => {
+                            eprintln!(
+                                "Channel disconnected while still running, exit event loop..."
+                            );
+                            break 'outer Err(io::Error::other(e));
+                        }
+                    },
+                }
+            }
         }
     }
 
@@ -175,11 +198,11 @@ impl Server {
         Ok(())
     }
 
-    fn process_expiry(&mut self) -> u64 {
+    fn process_conn_expiry(&mut self) -> u64 {
         let ts = get_time();
         let mut next_check: Option<u64> = None;
         let mut remove_list = Vec::new();
-        while let Some(id) = self.expiry.pop_front() {
+        while let Some(id) = self.conn_expiry.pop_front() {
             let Some(conn) = self.conns.get_mut(id) else {
                 continue;
             };
@@ -198,19 +221,54 @@ impl Server {
                     remove_list.push(id);
                 } else {
                     conn.expect_expire = conn.last_access + CONNECTION_TIMEOUT_MS;
-                    self.expiry.push_back(id);
+                    self.conn_expiry.push_back(id);
                 }
             } else {
                 let nts = conn.expect_expire - ts;
                 next_check = next_check.map(|t| t.min(nts)).or(Some(nts));
-                self.expiry.push_front(id);
+                self.conn_expiry.push_front(id);
                 break;
             }
         }
 
         remove_list.into_iter().for_each(|id| {
-            eprintln!("Dropping connection with id={}", id);
             let _ = self.conns.remove(id);
+        });
+
+        next_check.unwrap_or(100)
+    }
+
+    fn process_ent_expiry(&mut self) -> u64 {
+        let map = self.store.get_map();
+        let ts = get_time();
+        let guard = &epoch::pin();
+        let mut next_check: Option<u64> = None;
+        let mut remove_list = Vec::new();
+
+        while let Some((key, expect_expire)) = self.ent_expiry.pop_front() {
+            let Some((_, ent)) = map.lookup(&key, guard) else {
+                continue;
+            };
+
+            if ts >= expect_expire {
+                // exp_time may be updated by PEXPIRE before processing
+                // double check to make sure
+                let exp_time = ent.expire.load(Ordering::Acquire);
+                if ts >= exp_time {
+                    remove_list.push(key);
+                } else {
+                    self.ent_expiry.push_back((key, exp_time));
+                }
+            } else {
+                let nts = expect_expire - ts;
+                next_check = next_check.map(|t| t.min(nts)).or(Some(nts));
+                self.ent_expiry.push_front((key, expect_expire));
+                break;
+            }
+        }
+
+        remove_list.into_iter().for_each(|key| {
+            let _ = map.remove(&key, guard);
         });
 
         next_check.unwrap_or(100)
@@ -290,17 +348,12 @@ fn process_reqs(store: &Store, state: &mut ConnState) {
                     if let ProtocolData::SimpleError(_) = &dat {
                         dat
                     } else {
-                        ProtocolData::SimpleError(Arc::from("Invalid protocol data for command"))
+                        ProtocolData::SimpleError(Arc::from("Invalid command"))
                     }
                 }
             })
             .for_each(|r| r.encode(&mut state.write_buf));
     }
-}
-
-fn get_time() -> u64 {
-    let start = START_TIME.get_or_init(|| Instant::now());
-    start.elapsed().as_millis() as u64
 }
 
 extern "C" fn shutdown(_: c_int) {

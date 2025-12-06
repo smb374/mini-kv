@@ -248,11 +248,10 @@ where
         Err(())
     }
 
-    fn fold<S, F>(&self, state: &mut S, mut f: F) -> bool
+    fn fold<S, F>(&self, state: &mut S, guard: &epoch::Guard, mut f: F) -> bool
     where
         F: FnMut(&mut S, &(K, V)) -> bool,
     {
-        let guard = &epoch::pin();
         for seg in 0..self.nsegs {
             let start = seg * SEGMENT_SIZE;
             let mut ts_before = self.segments[seg as usize].ts.load(Ordering::Acquire);
@@ -531,11 +530,10 @@ where
         res
     }
 
-    pub fn fold<S, F>(&self, state: &mut S, f: F) -> bool
+    pub fn fold<S, F>(&self, state: &mut S, guard: &epoch::Guard, f: F) -> bool
     where
         F: FnMut(&mut S, &(K, V)) -> bool,
     {
-        let guard = &epoch::pin();
         let mut active = self.active.load(Ordering::Acquire, guard);
         {
             let tref = unsafe { active.as_ref() }.expect("Active should be always non-null");
@@ -546,7 +544,7 @@ where
             }
         }
         let tref = unsafe { active.as_ref() }.expect("Active should be always non-null");
-        tref.fold(state, f)
+        tref.fold(state, guard, f)
     }
 }
 
