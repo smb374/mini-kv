@@ -70,6 +70,7 @@ ValKey:
 
 ## Future Work
 
+- Finish example client in `src/client`.
 - Go with full Redis semantic support or at least similar command format
 - Add benchmark for the Rust implementation of the concurrent Hopscotch hasmap and compare it with the results in the C code repo by Google Benchmark.
 - Other plans mentioned in the C code repo.
