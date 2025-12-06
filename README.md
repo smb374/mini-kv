@@ -88,8 +88,9 @@ ValKey:
 "GET","1865462.88","84.926","13.920","84.223","89.343","92.863","188.543"
 ```
 
-Using data size of 64 B since it's using a lot of memory even with this:
-![C10K use 12G of actual RAM of this repo's server](./_assets/c10K_mem_usage.png)
+Note on Memory Usage: The benchmark used a reduced data size of 64 B because the test involves ~50 million unique inserts, which consumes significant memory.
+
+![The server utilizing ~12GB of RAM during the C10K test](./_assets/c10K_mem_usage.png)
 
 ## Future Work
 
