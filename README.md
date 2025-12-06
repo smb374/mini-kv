@@ -36,6 +36,9 @@ server. It will bind to `0.0.0.0:6379` by default.
 Since the server now uses RESP2 it can be benchmarked with `redis-benchmark`.
 Below it describes the parameter, hardware, and comparison with [ValKey](https://github.com/valkey-io/valkey), which is the default Redis implementation in Arch Linux's Package Repo.
 
+Note that all the benchmarks run on the same machine running the server, as I
+don't have wired connection in my current place.
+
 ### Benchmark Parameter
 
 - `-P 16`: pipeline 16 commands in 1 connection.
