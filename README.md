@@ -55,8 +55,8 @@ This repo:
 ```csv
 # redis-benchmark -P 16 -d 1024 --threads 4 -t set,get -n 5000000 -c 200 -r 1000000000000 --csv
 "test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
-"SET","3331112.50","0.878","0.008","0.319","3.359","3.975","5.335"
-"GET","6657789.50","0.451","0.008","0.303","1.439","1.727","2.575"
+"SET","3331112.50","0.862","0.008","0.383","3.319","4.039","4.903"
+"GET","4995005.00","0.524","0.008","0.311","1.743","2.023","3.655"
 ```
 
 ValKey (with persistence disabled by passing `--save=""`):
@@ -68,17 +68,28 @@ ValKey (with persistence disabled by passing `--save=""`):
 "GET","2497502.50","1.209","0.192","1.167","1.383","2.343","3.711"
 ```
 
-### Extra Result for C10K performance
+### C10K performance
+
+This Repo:
 
 ```csv
 # redis-benchmark -P 16 -d 64 --threads 4 -t set,get -n 50000000 -c 10000 -r 1000000000000 --csv
 "test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
-"SET","4751948.00","33.056","0.008","36.927","55.711","60.255","64.863"
-"GET","5542623.00","28.177","0.008","35.871","42.047","48.351","55.935"
+"SET","4751948.00","33.126","0.008","34.815","41.823","44.959","50.111"
+"GET","5543237.00","28.217","0.008","31.519","40.959","42.303","45.983"
+```
+
+ValKey:
+
+```csv
+# redis-benchmark -P 16 -d 64 --threads 4 -t set,get -n 50000000 -c 10000 -r 1000000000000 --csv
+"test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
+"SET","1677233.25","95.130","13.784","94.335","99.775","103.359","248.959"
+"GET","1865462.88","84.926","13.920","84.223","89.343","92.863","188.543"
 ```
 
 Using data size of 64 B since it's using a lot of memory even with this:
-![](./_assets/c10K_mem_usage.png)
+![C10K use 12G of actual RAM of this repo's server](./_assets/c10K_mem_usage.png)
 
 ## Future Work
 

@@ -105,6 +105,7 @@ impl Server {
     pub fn main_loop(&mut self) -> io::Result<()> {
         let mut events = Events::with_capacity(EVENT_CAPACITY);
         let mut timeout_ms = 100;
+        let mut accept_ready = false;
 
         'outer: loop {
             match self
@@ -118,36 +119,9 @@ impl Server {
 
             for ev in events.iter() {
                 match ev.token() {
-                    SERVER_TOKEN => loop {
-                        match self.listener.accept() {
-                            Ok((mut conn, _addr)) => {
-                                let ent = self.conns.vacant_entry();
-                                let key = ent.key();
-                                if key >= MAX_TOKENS {
-                                    continue;
-                                }
-
-                                self.poll.registry().register(
-                                    &mut conn,
-                                    Token(key),
-                                    Interest::READABLE | Interest::WRITABLE,
-                                )?;
-
-                                let state = Arc::new(Mutex::new(Some(ConnState::new(conn))));
-                                let ts = get_time();
-                                let conn = Connection {
-                                    last_access: ts,
-                                    expect_expire: ts + CONNECTION_TIMEOUT_MS,
-                                    state,
-                                };
-
-                                ent.insert(conn);
-                                self.conn_expiry.push_back(key);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => break,
-                            Err(err) => return Err(err),
-                        }
-                    },
+                    SERVER_TOKEN => {
+                        accept_ready = true;
+                    }
                     WAKER_TOKEN => break 'outer Ok(()),
                     Token(t) if self.conns.contains(t) => {
                         let conn = self.conns.get_mut(t).unwrap();
@@ -165,22 +139,64 @@ impl Server {
                     }
                 }
             }
-            let nts1 = self.process_conn_expiry();
-            let nts2 = self.process_ent_expiry();
-            timeout_ms = nts1.min(nts2);
-            // At most 1024 receives to mitigate churns
-            for _ in 0..1024 {
-                match self.exp_rx.try_recv() {
-                    Ok(item) => self.ent_expiry.push_back(item),
-                    Err(e) => match e {
-                        channel::TryRecvError::Empty => break,
-                        channel::TryRecvError::Disconnected => {
-                            eprintln!(
-                                "Channel disconnected while still running, exit event loop..."
-                            );
-                            break 'outer Err(io::Error::other(e));
+            if accept_ready {
+                for _ in 0..EVENT_CAPACITY {
+                    match self.listener.accept() {
+                        Ok((mut conn, _addr)) => {
+                            let ent = self.conns.vacant_entry();
+                            let key = ent.key();
+                            if key >= MAX_TOKENS {
+                                continue;
+                            }
+
+                            self.poll.registry().register(
+                                &mut conn,
+                                Token(key),
+                                Interest::READABLE | Interest::WRITABLE,
+                            )?;
+
+                            let state = Arc::new(Mutex::new(Some(ConnState::new(conn))));
+                            let ts = get_time();
+                            let conn = Connection {
+                                last_access: ts,
+                                expect_expire: ts + CONNECTION_TIMEOUT_MS,
+                                state,
+                            };
+
+                            ent.insert(conn);
+                            self.conn_expiry.push_back(key);
                         }
-                    },
+                        Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                            accept_ready = false;
+                            break;
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+            }
+
+            if self.ent_expiry.is_empty() {
+                timeout_ms = self.process_conn_expiry();
+            } else {
+                let nts1 = self.process_conn_expiry();
+                let nts2 = self.process_ent_expiry();
+                timeout_ms = nts1.min(nts2);
+            }
+            // At most 4096 receives to mitigate churns
+            if !self.exp_rx.is_empty() {
+                for _ in 0..EVENT_CAPACITY {
+                    match self.exp_rx.try_recv() {
+                        Ok(item) => self.ent_expiry.push_back(item),
+                        Err(e) => match e {
+                            channel::TryRecvError::Empty => break,
+                            channel::TryRecvError::Disconnected => {
+                                eprintln!(
+                                    "Channel disconnected while still running, exit event loop..."
+                                );
+                                break 'outer Err(io::Error::other(e));
+                            }
+                        },
+                    }
                 }
             }
         }
