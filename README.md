@@ -6,6 +6,11 @@ This is a port from the C project [smb374/redis-c](https://github.com/smb374/red
 
 For the list of commands supported see the C code repo or go to [Build Your Own Redis](https://build-your-own.org/redis/#table-of-contents) to check it as the project and the C code implements the list of commands from the book.
 
+## How to run
+
+Run `cargo build --release` and run `target/release/kv_server` to start the
+server. It will bind to `0.0.0.0:6379` by default.
+
 ## Dependencies
 
 - [bytes](https://crates.io/crates/bytes): Efficient byte buffer.
@@ -97,6 +102,9 @@ Note on Memory Usage: The benchmark used a reduced data size of 64 B because the
 ## Future Work
 
 - Finish example client in `src/client`.
+- Add command line options to support setting host and port other than
+  `0.0.0.0:6379` and other configuration.
+- Add proper logging system to log info.
 - Go with full Redis semantic support or at least similar command format
 - Add benchmark for the Rust implementation of the concurrent Hopscotch hashmap and compare it with the results in the C code repo by Google Benchmark.
 - Other plans mentioned in the C code repo.
