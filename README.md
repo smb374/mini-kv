@@ -59,7 +59,7 @@ This repo:
 "GET","5000000.00","0.535","0.008","0.287","1.919","2.247","3.487"
 ```
 
-ValKey:
+ValKey (with persistence disabled by passing `--save=""`):
 
 ```csv
 # redis-benchmark -P 16 -d 1024 --threads 4 -t set,get -n 5000000 -c 200 -r 1000000000000 --csv
