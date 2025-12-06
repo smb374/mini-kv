@@ -21,7 +21,7 @@ For the list of commands supported see the C code repo or go to [Build Your Own 
 
 ## Design update
 
-- Connection & entry expiry are now all handled with a deque, using FIFO-reinsertion like mechanism instead of LRU like mechanism, reducing complexity and entry expiry now doesn't rely on concurrent skiplist with this.
+- Connection & entry expiry are now all handled with a deque, using FIFO-reinsertion like mechanism instead of LRU-like mechanism, reducing complexity and entry expiry now doesn't rely on concurrent skiplist with this.
 - ZSet is now implemented by a `HashMap<Arc<str>, f64>` with a `BTreeSet<([u8; 8], Arc<str>)>`. The `[u8; 8]` is obtained by using memcmp friendly encoding on `f64` to use lexicographic order and naturally fits with string comparison.
 - Connection is now handled by workers instead of letting main thread does all the IO then dispatch commands to each worker, this has made command pipelining trivial and can be executed in command order. Scheduling is still done by Round-Robin.
 - Server now defaults to use 4 instead of 8 workers, resulting in 1+4 configuration.
@@ -72,5 +72,5 @@ ValKey:
 
 - Finish example client in `src/client`.
 - Go with full Redis semantic support or at least similar command format
-- Add benchmark for the Rust implementation of the concurrent Hopscotch hasmap and compare it with the results in the C code repo by Google Benchmark.
+- Add benchmark for the Rust implementation of the concurrent Hopscotch hashmap and compare it with the results in the C code repo by Google Benchmark.
 - Other plans mentioned in the C code repo.
