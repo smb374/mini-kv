@@ -12,7 +12,7 @@ For the list of commands supported see the C code repo or go to [Build Your Own 
 - [crossbeam](https://crates.io/crates/crossbeam): Mainly 2 use submodules
   - `epoch` for validated EBR instead of the home-baked QSBR in the C code repo.
   - `channel` for faster inter-thread channel implementation than `std::sync::mpsc`.
-- [mio](https://crates.io/crates/mio): Low-level system IO polling meachanism wrapper for implementing non-blocking IO event loop.
+- [mio](https://crates.io/crates/mio): Low-level system IO polling mechanism wrapper for implementing non-blocking IO event loop.
 - [nix](https://crates.io/crates/nix): Only uses `signal` feature to have safe(r) sigaction for graceful shutdown on `SIGINT` & `SIGTERM`.
 - [nom](https://crates.io/crates/nom): Parser combinator library for RESP2 parser.
 - [slab](https://crates.io/crates/slab): Slab allocator for connection storage.
@@ -21,9 +21,9 @@ For the list of commands supported see the C code repo or go to [Build Your Own 
 
 ## Design update
 
-- Connection & entry expiry are now all handled with a deque and uses FIFO-reinsertion like mechanism instead of LRU like mechanism, reducing complexity and entry expiry now doesn't rely on concurrent skiplist with this.
+- Connection & entry expiry are now all handled with a deque, using FIFO-reinsertion like mechanism instead of LRU like mechanism, reducing complexity and entry expiry now doesn't rely on concurrent skiplist with this.
 - ZSet is now implemented by a `HashMap<Arc<str>, f64>` with a `BTreeSet<([u8; 8], Arc<str>)>`. The `[u8; 8]` is obtained by using memcmp friendly encoding on `f64` to use lexicographic order and naturally fits with string comparison.
-- Connection is now handled by workers instead of letting main thread does all the IO then dispatch commands to each worker, this has made command piplining trivial and can be executed in command order. Scheduling is still done by Round-Robin.
+- Connection is now handled by workers instead of letting main thread does all the IO then dispatch commands to each worker, this has made command pipelining trivial and can be executed in command order. Scheduling is still done by Round-Robin.
 - Server now defaults to use 4 instead of 8 workers, resulting in 1+4 configuration.
 
 ## Benchmark result
