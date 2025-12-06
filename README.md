@@ -68,6 +68,18 @@ ValKey (with persistence disabled by passing `--save=""`):
 "GET","2497502.50","1.209","0.192","1.167","1.383","2.343","3.711"
 ```
 
+### Extra Result for C10K performance
+
+```csv
+# redis-benchmark -P 16 -d 64 --threads 4 -t set,get -n 50000000 -c 10000 -r 1000000000000 --csv
+"test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
+"SET","4751948.00","33.056","0.008","36.927","55.711","60.255","64.863"
+"GET","5542623.00","28.177","0.008","35.871","42.047","48.351","55.935"
+```
+
+Using data size of 64 B since it's using a lot of memory even with this:
+![](./_assets/c10K_mem_usage.png)
+
 ## Future Work
 
 - Finish example client in `src/client`.
