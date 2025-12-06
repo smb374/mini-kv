@@ -55,8 +55,8 @@ This repo:
 ```csv
 # redis-benchmark -P 16 -d 1024 --threads 4 -t set,get -n 5000000 -c 200 -r 1000000000000 --csv
 "test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
-"SET","3331112.50","0.862","0.008","0.399","3.191","3.807","5.767"
-"GET","5000000.00","0.535","0.008","0.287","1.919","2.247","3.487"
+"SET","3331112.50","0.878","0.008","0.319","3.359","3.975","5.335"
+"GET","6657789.50","0.451","0.008","0.303","1.439","1.727","2.575"
 ```
 
 ValKey (with persistence disabled by passing `--save=""`):

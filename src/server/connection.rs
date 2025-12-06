@@ -19,7 +19,7 @@ impl ConnState {
     }
 
     pub fn read_sock(&mut self) -> io::Result<(usize, bool)> {
-        let mut buf = [0u8; 8192];
+        let mut buf = [0u8; 16384];
         let mut nread: usize = 0;
         loop {
             match self.sock.read(&mut buf) {
