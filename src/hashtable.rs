@@ -554,7 +554,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    const KEYS_PER_THREAD: usize = 100000;
+    const KEYS_PER_THREAD: usize = 1000000;
     #[test]
     fn concurrent_insert_all_present() {
         let map: Arc<ConcurrentHashMap<usize, usize>> = Arc::new(ConcurrentHashMap::new());
@@ -602,12 +602,12 @@ mod tests {
 
                 let t1 = thread::spawn(move || {
                     let guard = crossbeam::epoch::pin();
-                    map1.find_or_insert(1, 100, &guard).clone()
+                    map1.find_or_insert(1, 100, &guard).0.clone()
                 });
 
                 let t2 = thread::spawn(move || {
                     let guard = crossbeam::epoch::pin();
-                    map2.find_or_insert(2, 200, &guard).clone()
+                    map2.find_or_insert(2, 200, &guard).0.clone()
                 });
 
                 let r1 = t1.join().unwrap();
@@ -642,12 +642,12 @@ mod tests {
 
                 let t1 = thread::spawn(move || {
                     let guard = crossbeam::epoch::pin();
-                    map1.find_or_insert(1, 100, &guard).clone()
+                    map1.find_or_insert(1, 100, &guard).0.clone()
                 });
 
                 let t2 = thread::spawn(move || {
                     let guard = crossbeam::epoch::pin();
-                    map2.find_or_insert(1, 200, &guard).clone()
+                    map2.find_or_insert(1, 200, &guard).0.clone()
                 });
 
                 let r1 = t1.join().unwrap();
@@ -678,7 +678,7 @@ mod tests {
 
                 let t1 = thread::spawn(move || {
                     let guard = crossbeam::epoch::pin();
-                    map1.find_or_insert(1, 100, &guard).clone()
+                    map1.find_or_insert(1, 100, &guard).0.clone()
                 });
 
                 let t2 = thread::spawn(move || {

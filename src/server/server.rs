@@ -5,7 +5,7 @@ use std::{
     os::raw::c_int,
     sync::{Arc, Mutex, OnceLock, atomic::Ordering},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use crossbeam::{
@@ -293,7 +293,6 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                     };
                     if nread == 0 && is_eof {
                         let s = guard.take();
-                        eprintln!("Dropping connection with id={}", ev.token().0);
                         drop(s);
                         continue;
                     }
@@ -305,7 +304,6 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                     };
                     if nwrite == 0 && is_eof {
                         let s = guard.take();
-                        eprintln!("Dropping connection with id={}", ev.token().0);
                         drop(s);
                         continue;
                     }

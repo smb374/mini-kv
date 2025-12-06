@@ -5,11 +5,13 @@ use std::sync::{
 
 use crossbeam::{channel::Sender, epoch};
 
-use crate::{command::Command, get_time, hashtable::ConcurrentHashMap, proto::ProtocolData};
+use crate::{
+    command::Command, get_time, hashtable::ConcurrentHashMap, proto::ProtocolData, zset::ZSet,
+};
 
 pub enum EntryData {
     Data(Arc<[u8]>),
-    ZSet(()), // TODO: implement ZSet
+    ZSet(ZSet), // TODO: implement ZSet
 }
 
 impl AsRef<EntryData> for EntryData {
@@ -50,7 +52,7 @@ impl Store {
                 Err(()) => ProtocolData::SimpleError(Arc::from("GET on a ZSET entry")),
             },
             Command::Set { key, val } => {
-                if self.set(key.clone(), val.clone()) {
+                if self.set(Arc::clone(key), Arc::clone(val)) {
                     ProtocolData::SimpleString(Arc::from("OK"))
                 } else {
                     ProtocolData::BulkString(None)
@@ -83,7 +85,52 @@ impl Store {
                 Some(ts) => ProtocolData::Integer(ts as i64),
                 None => ProtocolData::BulkString(None),
             },
-            _ => ProtocolData::SimpleError(Arc::from("Command not implemented")),
+            Command::Zadd { key, score, name } => {
+                match self.zadd(Arc::clone(key), *score, Arc::clone(name)) {
+                    Ok(()) => ProtocolData::SimpleString(Arc::from("OK")),
+                    Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
+                }
+            }
+            Command::Zscore { key, name } => match self.zscore(key, name) {
+                Ok(Some(f)) => ProtocolData::BulkString(Some(Arc::from(f.to_string().as_bytes()))),
+                Ok(None) => ProtocolData::BulkString(None),
+                Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
+            },
+            Command::Zrem { key, name } => match self.zrem(key, Arc::clone(name)) {
+                Ok(deleted) => {
+                    if deleted {
+                        ProtocolData::Integer(1)
+                    } else {
+                        ProtocolData::Integer(0)
+                    }
+                }
+                Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
+            },
+            Command::Zquery {
+                key,
+                score,
+                name,
+                offset,
+                limit,
+            } => match self.zquery(key, *score, Arc::clone(name), *offset, *limit) {
+                Ok(Some(v)) => {
+                    let size = v.len() * 2;
+                    let dat =
+                        v.into_iter()
+                            .fold(Vec::with_capacity(size), |mut acc, (score, name)| {
+                                acc.push(ProtocolData::BulkString(Some(Arc::from(
+                                    name.as_bytes(),
+                                ))));
+                                acc.push(ProtocolData::BulkString(Some(Arc::from(
+                                    score.to_string().as_bytes(),
+                                ))));
+                                acc
+                            });
+                    ProtocolData::Array(Some(Arc::from(dat.into_boxed_slice())))
+                }
+                Ok(None) => ProtocolData::Array(None),
+                Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
+            },
         }
     }
 
@@ -164,5 +211,79 @@ impl Store {
             let ts = ent.expire.load(Ordering::Acquire);
             if ts == 0 { None } else { Some(ts - get_time()) }
         })
+    }
+
+    fn zadd(&self, key: Arc<str>, score: f64, name: Arc<str>) -> Result<(), ()> {
+        let ent = Entry {
+            data: Mutex::new(EntryData::ZSet(ZSet::new())),
+            expire: AtomicU64::new(0),
+        };
+        let guard = &epoch::pin();
+        let (_, eref) = self.map.find_or_insert(key, ent, guard).0;
+        let mut eguard = eref.data.lock().unwrap_or_else(|_| {
+            eref.data.clear_poison();
+            eref.data.lock().expect("Mutex poisoned again")
+        });
+        if let EntryData::ZSet(zs) = eguard.as_mut() {
+            zs.add(score, name);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn zscore(&self, key: &Arc<str>, name: &Arc<str>) -> Result<Option<f64>, ()> {
+        let guard = &epoch::pin();
+        let Some((_, eref)) = self.map.lookup(key, guard) else {
+            return Ok(None);
+        };
+        let eguard = eref.data.lock().unwrap_or_else(|_| {
+            eref.data.clear_poison();
+            eref.data.lock().expect("Mutex poisoned again")
+        });
+        if let EntryData::ZSet(zs) = eguard.as_ref() {
+            Ok(zs.score(name))
+        } else {
+            Err(())
+        }
+    }
+
+    fn zrem(&self, key: &Arc<str>, name: Arc<str>) -> Result<bool, ()> {
+        let guard = &epoch::pin();
+        let Some((_, eref)) = self.map.lookup(key, guard) else {
+            return Ok(false);
+        };
+        let mut eguard = eref.data.lock().unwrap_or_else(|_| {
+            eref.data.clear_poison();
+            eref.data.lock().expect("Mutex poisoned again")
+        });
+        if let EntryData::ZSet(zs) = eguard.as_mut() {
+            Ok(zs.del(name))
+        } else {
+            Err(())
+        }
+    }
+
+    fn zquery(
+        &self,
+        key: &Arc<str>,
+        score: f64,
+        name: Arc<str>,
+        offset: i64,
+        limit: usize,
+    ) -> Result<Option<Vec<(f64, Arc<str>)>>, ()> {
+        let guard = &epoch::pin();
+        let Some((_, eref)) = self.map.lookup(key, guard) else {
+            return Ok(None);
+        };
+        let eguard = eref.data.lock().unwrap_or_else(|_| {
+            eref.data.clear_poison();
+            eref.data.lock().expect("Mutex poisoned again")
+        });
+        if let EntryData::ZSet(zs) = eguard.as_ref() {
+            Ok(Some(zs.query(score, name, offset, limit)))
+        } else {
+            Err(())
+        }
     }
 }
