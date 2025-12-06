@@ -39,7 +39,9 @@ Below it describes the parameter, hardware, and comparison with [ValKey](https:/
 - `-t set,get`: Bench `SET` then `GET` with builtin commands
 - `-n 5000000`: Total 5M requests
 - `-c 200`: 200 Concurrent Clients
-- `-r 1000000000000`: Large key space for less key collision
+- `-r 1000000000000`: Large key space for less key collision.
+  Current implementation doesn't update entry on set (basically NX for Redis),
+  so using large keyspace ensures actual inserts.
 
 ### Hardware & OS
 
