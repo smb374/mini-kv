@@ -312,9 +312,10 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                         drop(s);
                         continue;
                     }
+                    process_reqs(&store, state);
                 }
-                process_reqs(&store, state);
-                if ev.is_writable() {
+                // Try to write anyways
+                if !state.write_buf.is_empty() {
                     let Ok((nwrite, is_eof)) = state.write_sock() else {
                         continue;
                     };

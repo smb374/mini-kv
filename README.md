@@ -116,3 +116,7 @@ Note on Memory Usage: The benchmark used a reduced data size of 64 B because the
 
 - Side-by-side comparison with ValKey on C10K test:
   ![C10K compare screenshot](./_assets/c10K_comparison.png)
+- 1K concurrent connection bench on M2 Air:
+  ![1K compare screenshot](_assets/c1K_m2air.png)
+  - Note that on C10K my M2 Air gets wacky so I didn't include it.
+    The 1K test still beats official Redis though even when GET behaves suboptimal compare to my PC.
