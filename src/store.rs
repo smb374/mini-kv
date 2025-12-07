@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use crossbeam::{channel::Sender, epoch};
 
@@ -11,7 +8,7 @@ use crate::{
 
 pub enum EntryData {
     Data(Arc<[u8]>),
-    ZSet(ZSet), // TODO: implement ZSet
+    ZSet(ZSet),
 }
 
 impl AsRef<EntryData> for EntryData {
@@ -27,12 +24,12 @@ impl AsMut<EntryData> for EntryData {
 }
 
 pub struct Entry {
-    pub data: Mutex<EntryData>,
-    pub expire: AtomicU64,
+    pub data: EntryData,
+    pub expire: u64,
 }
 
 pub struct Store {
-    map: ConcurrentHashMap<Arc<str>, Entry>,
+    map: ConcurrentHashMap<Arc<str>, Mutex<Entry>>,
     exp_tx: Sender<(Arc<str>, u64)>,
 }
 
@@ -134,24 +131,23 @@ impl Store {
         }
     }
 
-    pub fn get_map(&self) -> &ConcurrentHashMap<Arc<str>, Entry> {
+    pub fn get_map(&self) -> &ConcurrentHashMap<Arc<str>, Mutex<Entry>> {
         &self.map
     }
 
     fn get(&self, key: &Arc<str>) -> Result<Option<Arc<[u8]>>, ()> {
         let guard = &epoch::pin();
-        if let Some((_, v)) = self.map.lookup(key, guard) {
-            let expire = v.expire.load(Ordering::Acquire);
-            if expire != 0 && get_time() >= expire {
+        if let Some((_, ent)) = self.map.lookup(key, guard) {
+            let eguard = ent.lock().unwrap_or_else(|_| {
+                ent.clear_poison();
+                ent.lock().expect("Mutex poisoned again")
+            });
+            if eguard.expire != 0 && get_time() >= eguard.expire {
                 self.map.remove(key, guard);
                 return Ok(None);
             }
-            let mut vguard = v.data.lock().unwrap_or_else(|_| {
-                v.data.clear_poison();
-                v.data.lock().expect("Mutex poisoned again")
-            });
-            match vguard.as_mut() {
-                EntryData::Data(s) => Ok(Some(Arc::clone(s))),
+            match eguard.data {
+                EntryData::Data(ref s) => Ok(Some(Arc::clone(s))),
                 EntryData::ZSet(_) => Err(()),
             }
         } else {
@@ -161,11 +157,24 @@ impl Store {
 
     fn set(&self, key: Arc<str>, val: Arc<[u8]>) -> bool {
         let guard = &epoch::pin();
-        let ent = Entry {
-            data: Mutex::new(EntryData::Data(val)),
-            expire: AtomicU64::new(0),
-        };
-        self.map.find_or_insert(key, ent, guard).1
+        let ent = Mutex::new(Entry {
+            data: EntryData::Data(Arc::clone(&val)),
+            expire: 0,
+        });
+        let ((_, eref), inserted) = self.map.find_or_insert(key, ent, guard);
+        if !inserted {
+            let mut eguard = eref.lock().unwrap_or_else(|_| {
+                eref.clear_poison();
+                eref.lock().expect("Mutex poisoned again")
+            });
+            if let EntryData::ZSet(_) = eguard.data {
+                return false;
+            }
+
+            eguard.data = EntryData::Data(val);
+            eguard.expire = 0;
+        }
+        true
     }
 
     fn del(&self, key: &Arc<str>) -> bool {
@@ -178,8 +187,11 @@ impl Store {
         let mut keys = Vec::new();
         let ts = get_time();
         self.map.fold(&mut keys, guard, |acc, (k, ent)| {
-            let expire = ent.expire.load(Ordering::Acquire);
-            if expire != 0 && ts >= expire {
+            let eguard = ent.lock().unwrap_or_else(|_| {
+                ent.clear_poison();
+                ent.lock().expect("Mutex poisoned again")
+            });
+            if eguard.expire != 0 && ts >= eguard.expire {
                 self.map.remove(k, guard);
             } else {
                 acc.push(Arc::from(k.as_bytes()));
@@ -193,7 +205,13 @@ impl Store {
         let guard = &epoch::pin();
         if let Some((_, ent)) = self.map.lookup(key, guard) {
             let ts = get_time() + expire_ms;
-            if ent.expire.swap(ts, Ordering::AcqRel) == 0 {
+            let mut eguard = ent.lock().unwrap_or_else(|_| {
+                ent.clear_poison();
+                ent.lock().expect("Mutex poisoned again")
+            });
+            let old_ts = eguard.expire;
+            eguard.expire = ts;
+            if old_ts == 0 {
                 // Send on fresh set to insert into expiry on main thread
                 self.exp_tx
                     .clone() // Clone on send to not use the same tx for every worker, maybe use TLS instead?
@@ -208,23 +226,27 @@ impl Store {
 
     fn pttl(&self, key: &Arc<str>) -> Option<u64> {
         self.map.lookup(key, &epoch::pin()).and_then(|(_, ent)| {
-            let ts = ent.expire.load(Ordering::Acquire);
+            let eguard = ent.lock().unwrap_or_else(|_| {
+                ent.clear_poison();
+                ent.lock().expect("Mutex poisoned again")
+            });
+            let ts = eguard.expire;
             if ts == 0 { None } else { Some(ts - get_time()) }
         })
     }
 
     fn zadd(&self, key: Arc<str>, score: f64, name: Arc<str>) -> Result<(), ()> {
-        let ent = Entry {
-            data: Mutex::new(EntryData::ZSet(ZSet::new())),
-            expire: AtomicU64::new(0),
-        };
+        let ent = Mutex::new(Entry {
+            data: EntryData::ZSet(ZSet::new()),
+            expire: 0,
+        });
         let guard = &epoch::pin();
         let (_, eref) = self.map.find_or_insert(key, ent, guard).0;
-        let mut eguard = eref.data.lock().unwrap_or_else(|_| {
-            eref.data.clear_poison();
-            eref.data.lock().expect("Mutex poisoned again")
+        let mut eguard = eref.lock().unwrap_or_else(|_| {
+            eref.clear_poison();
+            eref.lock().expect("Mutex poisoned again")
         });
-        if let EntryData::ZSet(zs) = eguard.as_mut() {
+        if let EntryData::ZSet(zs) = eguard.data.as_mut() {
             zs.add(score, name);
             Ok(())
         } else {
@@ -237,11 +259,11 @@ impl Store {
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(None);
         };
-        let eguard = eref.data.lock().unwrap_or_else(|_| {
-            eref.data.clear_poison();
-            eref.data.lock().expect("Mutex poisoned again")
+        let eguard = eref.lock().unwrap_or_else(|_| {
+            eref.clear_poison();
+            eref.lock().expect("Mutex poisoned again")
         });
-        if let EntryData::ZSet(zs) = eguard.as_ref() {
+        if let EntryData::ZSet(zs) = eguard.data.as_ref() {
             Ok(zs.score(name))
         } else {
             Err(())
@@ -253,11 +275,11 @@ impl Store {
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(false);
         };
-        let mut eguard = eref.data.lock().unwrap_or_else(|_| {
-            eref.data.clear_poison();
-            eref.data.lock().expect("Mutex poisoned again")
+        let mut eguard = eref.lock().unwrap_or_else(|_| {
+            eref.clear_poison();
+            eref.lock().expect("Mutex poisoned again")
         });
-        if let EntryData::ZSet(zs) = eguard.as_mut() {
+        if let EntryData::ZSet(zs) = eguard.data.as_mut() {
             Ok(zs.del(name))
         } else {
             Err(())
@@ -276,11 +298,11 @@ impl Store {
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(None);
         };
-        let eguard = eref.data.lock().unwrap_or_else(|_| {
-            eref.data.clear_poison();
-            eref.data.lock().expect("Mutex poisoned again")
+        let eguard = eref.lock().unwrap_or_else(|_| {
+            eref.clear_poison();
+            eref.lock().expect("Mutex poisoned again")
         });
-        if let EntryData::ZSet(zs) = eguard.as_ref() {
+        if let EntryData::ZSet(zs) = eguard.data.as_ref() {
             Ok(Some(zs.query(score, name, offset, limit)))
         } else {
             Err(())
