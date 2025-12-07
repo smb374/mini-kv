@@ -47,9 +47,7 @@ don't have wired connection in my current place.
 - `-t set,get`: Bench `SET` then `GET` with builtin commands
 - `-n 5000000`: Total 5M requests
 - `-c 200`: 200 Concurrent Clients
-- `-r 1000000000000`: Large key space for less key collision.
-  Current implementation doesn't update entry on set (basically NX for Redis),
-  so using large keyspace ensures actual inserts.
+- `-r 1000000000000`: Large keyspace ensures high insert-to-update ratio for realistic worst-case testing.
 
 ### Hardware & OS
 
@@ -80,6 +78,9 @@ ValKey (with persistence disabled by passing `--save=""`):
 
 ### C10K performance
 
+While C10K is a solved problem in modern systems, it remains a useful stress
+test for comparing architectures under high connection count.
+
 This Repo:
 
 ```csv
@@ -103,6 +104,7 @@ Note on Memory Usage: The benchmark used a reduced data size of 64 B because the
 ![The server utilizing ~12GB of RAM during the C10K test](./_assets/c10K_mem_usage.png)
 
 ### 1K concurrent connections from M2 Air
+
 Note that on C10K my M2 Air gets wacky so I didn't include it. The 1K test still beats official Redis though even when GET behaves suboptimal compare to my PC. Also the comparison uses Redis 8.4 from Redis instead of ValKey.
 
 This Repo:
@@ -115,6 +117,7 @@ This Repo:
 ```
 
 Redis 8.4:
+
 ```csv
 # redis-benchmark -P 16 -d 64 --threads 4 -t set,get -n 5000000 -c 1000 -r 1000000000000 --csv
 "test","rps","avg_latency_ms","min_latency_ms","p50_latency_ms","p95_latency_ms","p99_latency_ms","max_latency_ms"
