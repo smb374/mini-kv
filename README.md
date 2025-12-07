@@ -148,4 +148,9 @@ Redis 8.4:
 - Side-by-side comparison with ValKey on C10K test:
   ![C10K compare screenshot](./_assets/c10K_comparison.png)
 - 1K concurrent connection bench on M2 Air:
-  ![1K compare screenshot](_assets/c1K_m2air.png)
+  ![1K compare screenshot](./_assets/c1K_m2air.png)
+
+## Declare Use of Generative AI
+
+I use generative AI to have design level discussion and test code generation, every piece of implementation
+code is directly written by me without copy-pasting from the chats.
