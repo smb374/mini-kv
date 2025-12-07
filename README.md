@@ -11,6 +11,14 @@ For the list of commands supported see the C code repo or go to [Build Your Own 
 Run `cargo build --release` and run `target/release/kv_server` to start the
 server. It will bind to `0.0.0.0:6379` by default.
 
+## Features
+
+- No async: The server doesn't use heavy async runtime but uses `mio` and implements event loop directly.
+- Small result binary: Under release build it produces a binary less than 1MB for `kv_server` executable.
+- Multi-thread: Unlike most of the Redis implementation, the connections are dispatched to 4 worker threads
+  and the primary storage is done with a concurrent Hopscotch hashmap with XXH3-64 hashing.
+- RESP2 support: The server supports RESP2 protocol so you can use existing clients/CLI with RESP2 to access.
+
 ## Dependencies
 
 - [bytes](https://crates.io/crates/bytes): Efficient byte buffer.

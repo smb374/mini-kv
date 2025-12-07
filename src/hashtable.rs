@@ -16,8 +16,10 @@ use std::{
     thread,
 };
 
-use crossbeam::epoch::{self, Atomic};
-use crossbeam::utils::Backoff;
+use crossbeam::{
+    epoch::{self, Atomic},
+    utils::Backoff,
+};
 use std::{
     hash::{Hash, Hasher},
     time::Duration,
