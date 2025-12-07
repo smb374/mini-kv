@@ -26,7 +26,7 @@ use crate::connection::ConnState;
 const MAX_TOKENS: usize = 0x80000000; // i32 max + 1
 const SERVER_TOKEN: Token = Token(MAX_TOKENS);
 const WAKER_TOKEN: Token = Token(MAX_TOKENS + 1);
-const EVENT_CAPACITY: usize = 4096;
+const EVENT_CAPACITY: usize = 65536;
 const CONNECTION_TIMEOUT_MS: u64 = 30000;
 
 static WAKER: OnceLock<Waker> = OnceLock::new();
@@ -95,7 +95,7 @@ impl Server {
             conns: Slab::with_capacity(4096),
             workers,
             next_worker: 0,
-            conn_expiry: VecDeque::with_capacity(4096),
+            conn_expiry: VecDeque::with_capacity(EVENT_CAPACITY),
             ent_expiry: VecDeque::with_capacity(4096),
             exp_rx,
             store,
@@ -140,7 +140,7 @@ impl Server {
                 }
             }
             if accept_ready {
-                for _ in 0..EVENT_CAPACITY {
+                for _ in 0..4096 {
                     match self.listener.accept() {
                         Ok((mut conn, _addr)) => {
                             let ent = self.conns.vacant_entry();
@@ -184,7 +184,7 @@ impl Server {
             }
             // At most 4096 receives to mitigate churns
             if !self.exp_rx.is_empty() {
-                for _ in 0..EVENT_CAPACITY {
+                for _ in 0..4096 {
                     match self.exp_rx.try_recv() {
                         Ok(item) => self.ent_expiry.push_back(item),
                         Err(e) => match e {
