@@ -111,3 +111,8 @@ Note on Memory Usage: The benchmark used a reduced data size of 64 B because the
 - Go with full Redis semantic support or at least similar command format
 - Add benchmark for the Rust implementation of the concurrent Hopscotch hashmap and compare it with the results in the C code repo by Google Benchmark.
 - Other plans mentioned in the C code repo.
+
+## Screenshots
+
+- Side-by-side comparison with ValKey on C10K test:
+  ![C10K compare screenshot](./_assets/c10K_comparison.png)
