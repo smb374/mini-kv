@@ -32,14 +32,14 @@ server. It will bind to `0.0.0.0:6379` by default.
 - [twox-hash](https://crates.io/crates/twox-hash): Provide XXH3-64 used as hasher for the concurrent hashmap.
 - [shuttle](https://crates.io/crates/shuttle): Randomized tests for the concurrent hashmap when feature `shuttle` is enabled for test.
 
-## Design update
+## Design update from previous C code
 
 - Connection & entry expiry are now all handled with a deque, using FIFO-reinsertion like mechanism instead of LRU-like mechanism, reducing complexity and entry expiry now doesn't rely on concurrent skiplist with this.
 - ZSet is now implemented by a `HashMap<Arc<str>, f64>` with a `BTreeSet<([u8; 8], Arc<str>)>`. The `[u8; 8]` is obtained by using memcmp friendly encoding on `f64` to use lexicographic order and naturally fits with string comparison.
 - Connection is now handled by workers instead of letting main thread does all the IO then dispatch commands to each worker, this has made command pipelining trivial and can be executed in command order. Scheduling is still done by Round-Robin.
 - Server now defaults to use 4 instead of 8 workers, resulting in 1+4 configuration.
 
-## Benchmark result
+## Benchmark
 
 Since the server now uses RESP2 it can be benchmarked with `redis-benchmark`.
 Below it describes the parameter, hardware, and comparison with [ValKey](https://github.com/valkey-io/valkey), which is the default Redis implementation in Arch Linux's Package Repo.
