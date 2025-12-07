@@ -3,7 +3,7 @@ use std::{
     io,
     net::SocketAddr,
     os::raw::c_int,
-    sync::{Arc, Mutex, OnceLock, atomic::Ordering},
+    sync::{Arc, Mutex, OnceLock},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -269,7 +269,14 @@ impl Server {
             if ts >= expect_expire {
                 // exp_time may be updated by PEXPIRE before processing
                 // double check to make sure
-                let exp_time = ent.expire.load(Ordering::Acquire);
+                let eguard = ent.lock().unwrap_or_else(|_| {
+                    ent.clear_poison();
+                    ent.lock().expect("Mutex poisoned again")
+                });
+                let exp_time = eguard.expire;
+                if exp_time == 0 {
+                    continue;
+                }
                 if ts >= exp_time {
                     remove_list.push(key);
                 } else {
