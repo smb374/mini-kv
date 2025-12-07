@@ -274,6 +274,9 @@ impl Server {
                     ent.lock().expect("Mutex poisoned again")
                 });
                 let exp_time = eguard.expire;
+                if exp_time == 0 {
+                    continue;
+                }
                 if ts >= exp_time {
                     remove_list.push(key);
                 } else {
