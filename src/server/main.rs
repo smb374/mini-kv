@@ -2,11 +2,18 @@ mod args;
 mod connection;
 mod server;
 
-use std::{io, net::SocketAddr};
+use std::io;
 
 use log::LevelFilter;
 
 use crate::{args::parse_args, server::Server};
+
+fn print_help() {
+    eprintln!(
+        "Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]: Start server"
+    );
+    eprintln!("Usage: kv_server [-h|--help]: Display help text");
+}
 
 fn main() -> io::Result<()> {
     simple_logger::SimpleLogger::new()
@@ -14,10 +21,18 @@ fn main() -> io::Result<()> {
         .env()
         .init()
         .map_err(io::Error::other)?;
-    let (addr, workers) = parse_args(std::env::args_os()).unwrap_or_else(|e| {
-        log::error!("Parse arg error: {e}");
-        (SocketAddr::from(([0, 0, 0, 0], 6379)), 4)
-    });
+    let (addr, workers) = match parse_args(std::env::args_os()) {
+        Ok(Some(x)) => x,
+        Ok(None) => {
+            print_help();
+            return Ok(());
+        }
+        Err(e) => {
+            eprintln!("Failed to parse args: {e}");
+            print_help();
+            return Err(io::Error::other(e));
+        }
+    };
     log::info!("Using addr={}, wrokers={}", addr, workers);
     let mut serv = Server::new(addr, workers)?;
 

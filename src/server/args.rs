@@ -10,7 +10,7 @@ struct Args {
 
 pub fn parse_args(
     raw: impl IntoIterator<Item = impl Into<OsString>>,
-) -> Result<(SocketAddr, usize), BoxedError> {
+) -> Result<Option<(SocketAddr, usize)>, BoxedError> {
     let mut args = Args {
         host: String::from("0.0.0.0"),
         port: 6379,
@@ -44,12 +44,13 @@ pub fn parse_args(
                         args.workers = workers;
                     }
                 }
+                Ok("help") => return Ok(None),
                 _ => return Err(format!("Unexpected Flag: --{}", arg.display()).into()),
             }
         } else if let Some(mut shorts) = arg.to_short() {
             while let Some(short) = shorts.next_flag() {
                 match short {
-                    Ok('h') => {
+                    Ok('H') => {
                         let val = shorts.next_value_os();
                         if let Some(host) = val.and_then(|x| x.to_str()) {
                             args.host = host.to_string();
@@ -99,6 +100,7 @@ pub fn parse_args(
                             }
                         }
                     }
+                    Ok('h') => return Ok(None),
                     Ok(c) => {
                         return Err(format!("Unexpected flag: -{c}").into());
                     }
@@ -111,5 +113,5 @@ pub fn parse_args(
     }
 
     let addr = format!("{}:{}", args.host, args.port).parse()?;
-    Ok((addr, args.workers))
+    Ok(Some((addr, args.workers)))
 }

@@ -11,6 +11,13 @@ For the list of commands supported see the C code repo or go to [Build Your Own 
 Run `cargo build --release` and run `target/release/kv_server` to start the
 server. It will bind to `0.0.0.0:6379` by default.
 
+Arguments:
+
+```
+Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]: Start server
+Usage: kv_server [-h|--help]: Display help text
+```
+
 ## Features
 
 - No async: The server doesn't use heavy async runtime but uses `mio` and implements event loop directly.
