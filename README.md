@@ -13,9 +13,11 @@ server. It will bind to `0.0.0.0:6379` by default.
 
 Arguments:
 
-```
-Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]: Start server
-Usage: kv_server [-h|--help]: Display help text
+```sh
+# Start server
+Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]
+# Display help text
+Usage: kv_server [-h|--help]
 ```
 
 ## Features

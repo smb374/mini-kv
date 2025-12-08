@@ -10,9 +10,9 @@ use crate::{args::parse_args, server::Server};
 
 fn print_help() {
     eprintln!(
-        "Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]: Start server"
+        "Usage: kv_server [-H <addr>|--host=<addr>] [-p <port>|--port=<port>] [-w <workers>|--workers=<workers>]"
     );
-    eprintln!("Usage: kv_server [-h|--help]: Display help text");
+    eprintln!("Usage: kv_server [-h|--help]");
 }
 
 fn main() -> io::Result<()> {
