@@ -10,6 +10,7 @@ readme = "README.md"
 
 [dependencies]
 bytes = "^1"
+clap_lex = "^0.7"
 crossbeam = "^0.8"
 mio = { version = "^1.1", features = ["net", "os-poll", "os-ext"] }
 nix = { version = "^0.30", default-features = false, features = ["signal"] }
@@ -23,10 +24,6 @@ shuttle = { version = "^0.8", optional = true }
 
 [features]
 shuttle = ["dep:shuttle"]
-
-[[bin]]
-name = "kv_client"
-path = "src/client/main.rs"
 
 [[bin]]
 name = "kv_server"

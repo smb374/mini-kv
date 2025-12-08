@@ -22,6 +22,7 @@ server. It will bind to `0.0.0.0:6379` by default.
 ## Dependencies
 
 - [bytes](https://crates.io/crates/bytes): Efficient byte buffer.
+- [clap_lex](https://crates.io/crates/clap_lex): Minimal argument parsing helper.
 - [crossbeam](https://crates.io/crates/crossbeam): Mainly 2 use submodules
   - `epoch` for validated EBR instead of the home-baked QSBR in the C code repo.
   - `channel` for faster inter-thread channel implementation than `std::sync::mpsc`.
@@ -136,8 +137,8 @@ Redis 8.4:
 ## Future Work
 
 - ~Finish example client in `src/client`.~ Just use any RESP2 compatible client.
-- Add command line options to support setting host and port other than
-  `0.0.0.0:6379` and other configuration.
+- ~Add command line options to support setting host and port other than
+  `0.0.0.0:6379` and other configuration.~ Done.
 - Add proper logging system to log info.
 - Go with full Redis semantic support or at least similar command format
 - Add benchmark for the Rust implementation of the concurrent Hopscotch hashmap and compare it with the results in the C code repo by Google Benchmark.

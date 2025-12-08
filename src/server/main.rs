@@ -1,12 +1,18 @@
+mod args;
 mod connection;
 mod server;
 
-use std::io;
+use std::{io, net::SocketAddr};
 
-use crate::server::Server;
+use crate::{args::parse_args, server::Server};
 
 fn main() -> io::Result<()> {
-    let mut serv = Server::new("0.0.0.0:6379".parse().unwrap(), 4)?;
+    let (addr, workers) = parse_args(std::env::args_os()).unwrap_or_else(|e| {
+        eprintln!("Parse arg error: {e}");
+        (SocketAddr::from(([0, 0, 0, 0], 6379)), 4)
+    });
+    eprintln!("Using addr={}, wrokers={}", addr, workers);
+    let mut serv = Server::new(addr, workers)?;
 
     if let Err(e) = serv.main_loop() {
         eprintln!("main loop error: {}", e);
