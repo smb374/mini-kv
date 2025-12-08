@@ -149,7 +149,7 @@ Redis 8.4:
 - ~Add command line options to support setting host and port other than
   `0.0.0.0:6379` and other configuration.~ Done.
 - ~Add proper logging system to log info.~ Logger set, now need to add logging statements.
-- Go with full Redis semantic support or at least similar command format
+- Go with full Redis semantic support or at least similar command format.
 - Add benchmark for the Rust implementation of the concurrent Hopscotch hashmap and compare it with the results in the C code repo by Google Benchmark.
 - Other plans mentioned in the C code repo.
 
