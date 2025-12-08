@@ -135,7 +135,7 @@ Redis 8.4:
 
 ## Future Work
 
-- Finish example client in `src/client`.
+- ~Finish example client in `src/client`.~ Just use any RESP2 compatible client.
 - Add command line options to support setting host and port other than
   `0.0.0.0:6379` and other configuration.
 - Add proper logging system to log info.
