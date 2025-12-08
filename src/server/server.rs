@@ -135,14 +135,15 @@ impl Server {
                             .map_err(io::Error::other)?;
                     }
                     Token(t) => {
-                        eprintln!("WARN: unexpected token={}, ignore for now", t);
+                        log::warn!("Unexpected token={}, ignore for now", t);
                     }
                 }
             }
             if accept_ready {
                 for _ in 0..4096 {
                     match self.listener.accept() {
-                        Ok((mut conn, _addr)) => {
+                        Ok((mut conn, addr)) => {
+                            log::info!("Got connection from {addr}");
                             let ent = self.conns.vacant_entry();
                             let key = ent.key();
                             if key >= MAX_TOKENS {
@@ -190,7 +191,7 @@ impl Server {
                         Err(e) => match e {
                             channel::TryRecvError::Empty => break,
                             channel::TryRecvError::Disconnected => {
-                                eprintln!(
+                                log::debug!(
                                     "Channel disconnected while still running, exit event loop..."
                                 );
                                 break 'outer Err(io::Error::other(e));
@@ -232,6 +233,7 @@ impl Server {
                         conn.state.lock().expect("Mutex poisoned again")
                     });
                     if let Some(s) = guard.take() {
+                        log::info!("Dropping connection with id={id}");
                         drop(s);
                     }
                     remove_list.push(id);
@@ -379,7 +381,7 @@ fn process_reqs(store: &Store, state: &mut ConnState) {
 }
 
 extern "C" fn shutdown(_: c_int) {
-    eprintln!("Shutting down...");
+    log::info!("Shutting down...");
     let waker = WAKER.wait();
     waker.wake().expect("Waker should success...");
 }
