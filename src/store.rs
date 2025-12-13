@@ -3,7 +3,11 @@ use std::sync::{Arc, Mutex};
 use crossbeam::{channel::Sender, epoch};
 
 use crate::{
-    command::Command, get_time, hashtable::ConcurrentHashMap, proto::ProtocolData, zset::ZSet,
+    command::{Command, ExpireArg, SetArgs, SetCond},
+    get_time,
+    hashtable::ConcurrentHashMap,
+    proto::ProtocolData,
+    zset::ZSet,
 };
 
 pub enum EntryData {
@@ -48,13 +52,10 @@ impl Store {
                 Ok(Some(s)) => ProtocolData::BulkString(Some(s)),
                 Err(()) => ProtocolData::SimpleError(Arc::from("GET on a ZSET entry")),
             },
-            Command::Set { key, val } => {
-                if self.set(Arc::clone(key), Arc::clone(val)) {
-                    ProtocolData::SimpleString(Arc::from("OK"))
-                } else {
-                    ProtocolData::BulkString(None)
-                }
-            }
+            Command::Set(args) => match self.set(args) {
+                Ok(s) => ProtocolData::BulkString(s),
+                Err(()) => ProtocolData::SimpleError(Arc::from("SET on a ZSET entry")),
+            },
             Command::Del { key } => {
                 if self.del(key) {
                     ProtocolData::Integer(1)
@@ -126,6 +127,7 @@ impl Store {
                 Ok(None) => ProtocolData::Array(None),
                 Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
             },
+            _ => ProtocolData::SimpleError(Arc::from("Not implemented")),
         }
     }
 
@@ -153,26 +155,56 @@ impl Store {
         }
     }
 
-    fn set(&self, key: Arc<[u8]>, val: Arc<[u8]>) -> bool {
+    fn set(&self, args: &SetArgs) -> Result<Option<Arc<[u8]>>, ()> {
         let guard = &epoch::pin();
+        let ts = get_time();
+        let expire = match args.expire {
+            Some(ExpireArg::EX(s)) => ts + s * 1000,
+            Some(ExpireArg::PX(ms)) => ts + ms,
+            Some(ExpireArg::EXAT(s)) => s * 1000,
+            Some(ExpireArg::PXAT(ms)) => ms,
+            None | Some(ExpireArg::KEEPTTL) => 0,
+        };
         let ent = Mutex::new(Entry {
-            data: EntryData::Data(Arc::clone(&val)),
-            expire: 0,
+            data: EntryData::Data(Arc::clone(&args.val)),
+            expire,
         });
-        let ((_, eref), inserted) = self.map.find_or_insert(key, ent, guard);
+        let ((_, eref), inserted) = self.map.find_or_insert(Arc::clone(&args.key), ent, guard);
         if !inserted {
             let mut eguard = eref.lock().unwrap_or_else(|_| {
                 eref.clear_poison();
                 eref.lock().expect("Mutex poisoned again")
             });
-            if let EntryData::ZSet(_) = eguard.data {
-                return false;
+            match eguard.data.as_ref() {
+                EntryData::ZSet(_) => Err(()),
+                EntryData::Data(old) => {
+                    let r = Arc::clone(old);
+                    if args.cond != Some(SetCond::NX) {
+                        eguard.data = EntryData::Data(Arc::clone(&args.val));
+                        let nexpire = match args.expire {
+                            Some(ExpireArg::EX(s)) => ts + s * 1000,
+                            Some(ExpireArg::PX(ms)) => ts + ms,
+                            Some(ExpireArg::EXAT(s)) => s * 1000,
+                            Some(ExpireArg::PXAT(ms)) => ms,
+                            Some(ExpireArg::KEEPTTL) => eguard.expire,
+                            None => 0,
+                        };
+                        eguard.expire = nexpire;
+                        if args.get_old { Ok(Some(r)) } else { Ok(None) }
+                    } else {
+                        if args.get_old { Ok(Some(r)) } else { Ok(None) }
+                    }
+                }
             }
-
-            eguard.data = EntryData::Data(val);
-            eguard.expire = 0;
+        } else {
+            if expire != 0 {
+                self.exp_tx
+                    .clone()
+                    .send((Arc::clone(&args.key), ts))
+                    .expect("Channel should be connected before worker shutdown...");
+            }
+            Ok(None)
         }
-        true
     }
 
     fn del(&self, key: &Arc<[u8]>) -> bool {
