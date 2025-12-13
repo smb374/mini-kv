@@ -54,8 +54,8 @@ pub struct Server {
     workers: Vec<Worker>,
     next_worker: usize,
     conn_expiry: VecDeque<usize>,
-    ent_expiry: VecDeque<(Arc<str>, u64)>,
-    exp_rx: Receiver<(Arc<str>, u64)>,
+    ent_expiry: VecDeque<(Arc<[u8]>, u64)>,
+    exp_rx: Receiver<(Arc<[u8]>, u64)>,
     store: Arc<Store>,
 }
 

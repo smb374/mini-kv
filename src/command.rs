@@ -4,41 +4,41 @@ use crate::proto::ProtocolData;
 
 pub enum Command {
     Get {
-        key: Arc<str>,
+        key: Arc<[u8]>,
     },
     Set {
-        key: Arc<str>,
+        key: Arc<[u8]>,
         val: Arc<[u8]>,
     },
     Del {
-        key: Arc<str>,
+        key: Arc<[u8]>,
     },
     Keys,
     Hello,
     Pexpire {
-        key: Arc<str>,
+        key: Arc<[u8]>,
         expire_ms: u64,
     },
     Pttl {
-        key: Arc<str>,
+        key: Arc<[u8]>,
     },
     Zadd {
-        key: Arc<str>,
+        key: Arc<[u8]>,
         score: f64,
-        name: Arc<str>,
+        name: Arc<[u8]>,
     },
     Zscore {
-        key: Arc<str>,
-        name: Arc<str>,
+        key: Arc<[u8]>,
+        name: Arc<[u8]>,
     },
     Zrem {
-        key: Arc<str>,
-        name: Arc<str>,
+        key: Arc<[u8]>,
+        name: Arc<[u8]>,
     },
     Zquery {
-        key: Arc<str>,
+        key: Arc<[u8]>,
         score: f64,
-        name: Arc<str>,
+        name: Arc<[u8]>,
         offset: i64,
         limit: usize,
     },
@@ -64,14 +64,14 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
 
     match cmd.as_ref() {
         "GET" if valid_args.len() >= 2 => Some(Command::Get {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            key: Arc::clone(&valid_args[1]),
         }),
         "SET" if valid_args.len() >= 3 => Some(Command::Set {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            key: Arc::clone(&valid_args[1]),
             val: Arc::clone(&valid_args[2]),
         }),
         "DEL" if valid_args.len() >= 2 => Some(Command::Del {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            key: Arc::clone(&valid_args[1]),
         }),
         "KEYS" => Some(Command::Keys),
         "HELLO" => Some(Command::Hello),
@@ -79,29 +79,29 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
             u64::from_str_radix(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref(), 10)
                 .ok()
                 .map(|x| Command::Pexpire {
-                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    key: Arc::clone(&valid_args[1]),
                     expire_ms: x,
                 })
         }
         "PTTL" if valid_args.len() >= 2 => Some(Command::Pttl {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+            key: Arc::clone(&valid_args[1]),
         }),
         "ZADD" if valid_args.len() >= 4 => {
             f64::from_str(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref())
                 .ok()
                 .map(|x| Command::Zadd {
-                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    key: Arc::clone(&valid_args[1]),
                     score: x,
-                    name: Arc::from(String::from_utf8_lossy(valid_args[3].as_ref())),
+                    name: Arc::clone(&valid_args[3]),
                 })
         }
         "ZSCORE" if valid_args.len() >= 3 => Some(Command::Zscore {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
-            name: Arc::from(String::from_utf8_lossy(valid_args[2].as_ref())),
+            key: Arc::clone(&valid_args[1]),
+            name: Arc::clone(&valid_args[2]),
         }),
         "ZREM" if valid_args.len() >= 3 => Some(Command::Zrem {
-            key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
-            name: Arc::from(String::from_utf8_lossy(valid_args[2].as_ref())),
+            key: Arc::clone(&valid_args[1]),
+            name: Arc::clone(&valid_args[2]),
         }),
         "ZQUERY" if valid_args.len() >= 6 => {
             f64::from_str(String::from_utf8_lossy(valid_args[2].as_ref()).as_ref())
@@ -121,9 +121,9 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
                     .ok(),
                 )
                 .map(|((x, y), z)| Command::Zquery {
-                    key: Arc::from(String::from_utf8_lossy(valid_args[1].as_ref())),
+                    key: Arc::clone(&valid_args[1]),
                     score: x,
-                    name: Arc::from(String::from_utf8_lossy(valid_args[3].as_ref())),
+                    name: Arc::clone(&valid_args[3]),
                     offset: y,
                     limit: z,
                 })

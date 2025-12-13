@@ -29,12 +29,12 @@ pub struct Entry {
 }
 
 pub struct Store {
-    map: ConcurrentHashMap<Arc<str>, Mutex<Entry>>,
-    exp_tx: Sender<(Arc<str>, u64)>,
+    map: ConcurrentHashMap<Arc<[u8]>, Mutex<Entry>>,
+    exp_tx: Sender<(Arc<[u8]>, u64)>,
 }
 
 impl Store {
-    pub fn new(exp_tx: Sender<(Arc<str>, u64)>) -> Self {
+    pub fn new(exp_tx: Sender<(Arc<[u8]>, u64)>) -> Self {
         Self {
             map: ConcurrentHashMap::new(),
             exp_tx,
@@ -115,9 +115,7 @@ impl Store {
                     let dat =
                         v.into_iter()
                             .fold(Vec::with_capacity(size), |mut acc, (score, name)| {
-                                acc.push(ProtocolData::BulkString(Some(Arc::from(
-                                    name.as_bytes(),
-                                ))));
+                                acc.push(ProtocolData::BulkString(Some(Arc::clone(&name))));
                                 acc.push(ProtocolData::BulkString(Some(Arc::from(
                                     score.to_string().as_bytes(),
                                 ))));
@@ -131,11 +129,11 @@ impl Store {
         }
     }
 
-    pub fn get_map(&self) -> &ConcurrentHashMap<Arc<str>, Mutex<Entry>> {
+    pub fn get_map(&self) -> &ConcurrentHashMap<Arc<[u8]>, Mutex<Entry>> {
         &self.map
     }
 
-    fn get(&self, key: &Arc<str>) -> Result<Option<Arc<[u8]>>, ()> {
+    fn get(&self, key: &Arc<[u8]>) -> Result<Option<Arc<[u8]>>, ()> {
         let guard = &epoch::pin();
         if let Some((_, ent)) = self.map.lookup(key, guard) {
             let eguard = ent.lock().unwrap_or_else(|_| {
@@ -155,7 +153,7 @@ impl Store {
         }
     }
 
-    fn set(&self, key: Arc<str>, val: Arc<[u8]>) -> bool {
+    fn set(&self, key: Arc<[u8]>, val: Arc<[u8]>) -> bool {
         let guard = &epoch::pin();
         let ent = Mutex::new(Entry {
             data: EntryData::Data(Arc::clone(&val)),
@@ -177,7 +175,7 @@ impl Store {
         true
     }
 
-    fn del(&self, key: &Arc<str>) -> bool {
+    fn del(&self, key: &Arc<[u8]>) -> bool {
         let guard = &epoch::pin();
         self.map.remove(&key, guard).is_some()
     }
@@ -194,14 +192,14 @@ impl Store {
             if eguard.expire != 0 && ts >= eguard.expire {
                 self.map.remove(k, guard);
             } else {
-                acc.push(Arc::from(k.as_bytes()));
+                acc.push(Arc::clone(&k));
             }
             true
         });
         keys
     }
 
-    fn pexpire(&self, key: &Arc<str>, expire_ms: u64) -> bool {
+    fn pexpire(&self, key: &Arc<[u8]>, expire_ms: u64) -> bool {
         let guard = &epoch::pin();
         if let Some((_, ent)) = self.map.lookup(key, guard) {
             let ts = get_time() + expire_ms;
@@ -224,7 +222,7 @@ impl Store {
         }
     }
 
-    fn pttl(&self, key: &Arc<str>) -> Option<u64> {
+    fn pttl(&self, key: &Arc<[u8]>) -> Option<u64> {
         self.map.lookup(key, &epoch::pin()).and_then(|(_, ent)| {
             let eguard = ent.lock().unwrap_or_else(|_| {
                 ent.clear_poison();
@@ -235,7 +233,7 @@ impl Store {
         })
     }
 
-    fn zadd(&self, key: Arc<str>, score: f64, name: Arc<str>) -> Result<(), ()> {
+    fn zadd(&self, key: Arc<[u8]>, score: f64, name: Arc<[u8]>) -> Result<(), ()> {
         let ent = Mutex::new(Entry {
             data: EntryData::ZSet(ZSet::new()),
             expire: 0,
@@ -254,7 +252,7 @@ impl Store {
         }
     }
 
-    fn zscore(&self, key: &Arc<str>, name: &Arc<str>) -> Result<Option<f64>, ()> {
+    fn zscore(&self, key: &Arc<[u8]>, name: &Arc<[u8]>) -> Result<Option<f64>, ()> {
         let guard = &epoch::pin();
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(None);
@@ -270,7 +268,7 @@ impl Store {
         }
     }
 
-    fn zrem(&self, key: &Arc<str>, name: Arc<str>) -> Result<bool, ()> {
+    fn zrem(&self, key: &Arc<[u8]>, name: Arc<[u8]>) -> Result<bool, ()> {
         let guard = &epoch::pin();
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(false);
@@ -288,12 +286,12 @@ impl Store {
 
     fn zquery(
         &self,
-        key: &Arc<str>,
+        key: &Arc<[u8]>,
         score: f64,
-        name: Arc<str>,
+        name: Arc<[u8]>,
         offset: i64,
         limit: usize,
-    ) -> Result<Option<Vec<(f64, Arc<str>)>>, ()> {
+    ) -> Result<Option<Vec<(f64, Arc<[u8]>)>>, ()> {
         let guard = &epoch::pin();
         let Some((_, eref)) = self.map.lookup(key, guard) else {
             return Ok(None);

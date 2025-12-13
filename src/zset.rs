@@ -7,8 +7,8 @@ use crate::{decode_float, encode_float};
 
 #[derive(Debug, Default)]
 pub struct ZSet {
-    index: HashMap<Arc<str>, f64>,
-    ordered: BTreeSet<([u8; 8], Arc<str>)>,
+    index: HashMap<Arc<[u8]>, f64>,
+    ordered: BTreeSet<([u8; 8], Arc<[u8]>)>,
 }
 
 impl ZSet {
@@ -16,7 +16,7 @@ impl ZSet {
         Self::default()
     }
 
-    pub fn add(&mut self, score: f64, name: Arc<str>) {
+    pub fn add(&mut self, score: f64, name: Arc<[u8]>) {
         if let Some(old_score) = self.index.insert(Arc::clone(&name), score) {
             self.ordered
                 .remove(&(encode_float(old_score), Arc::clone(&name)));
@@ -24,11 +24,11 @@ impl ZSet {
         self.ordered.insert((encode_float(score), name));
     }
 
-    pub fn score(&self, name: &Arc<str>) -> Option<f64> {
+    pub fn score(&self, name: &Arc<[u8]>) -> Option<f64> {
         self.index.get(name).copied()
     }
 
-    pub fn del(&mut self, name: Arc<str>) -> bool {
+    pub fn del(&mut self, name: Arc<[u8]>) -> bool {
         if let Some(score) = self.index.remove(&name) {
             self.ordered.remove(&(encode_float(score), name));
             true
@@ -40,12 +40,12 @@ impl ZSet {
     pub fn query(
         &self,
         score: f64,
-        name: Arc<str>,
+        name: Arc<[u8]>,
         offset: i64,
         limit: usize,
-    ) -> Vec<(f64, Arc<str>)> {
+    ) -> Vec<(f64, Arc<[u8]>)> {
         let base = (encode_float(score), name);
-        let range: &mut dyn Iterator<Item = &([u8; 8], Arc<str>)> = if offset < 0 {
+        let range: &mut dyn Iterator<Item = &([u8; 8], Arc<[u8]>)> = if offset < 0 {
             let mut range = self.ordered.range(..=base).rev().skip((-offset) as usize);
             match range.next() {
                 Some(b) => &mut self.ordered.range(b..),
