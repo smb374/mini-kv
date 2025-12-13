@@ -3,7 +3,7 @@ use std::{error, fmt, sync::Arc};
 use bytes::{BufMut, BytesMut};
 use nom::{
     IResult, Parser,
-    bytes::streaming::{tag, take_until},
+    bytes::streaming::{tag, take, take_until},
     character::streaming::anychar,
     combinator::{map, map_res, peek},
     multi::many_m_n,
@@ -137,7 +137,8 @@ fn parse_bulk_string(s: &[u8]) -> IResult<&[u8], ProtocolData> {
     if len == -1 {
         return Ok((left, ProtocolData::BulkString(None)));
     }
-    map_res(parse_line, |x| {
+    let size = len as usize;
+    map_res((take(size), tag("\r\n")), |(x, _): (&[u8], &[u8])| {
         if x.len() != len as usize {
             Err(ParseProtocolError::InvalidLength)
         } else {
