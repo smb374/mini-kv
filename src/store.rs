@@ -52,17 +52,22 @@ impl Store {
                 Ok(Some(s)) => ProtocolData::BulkString(Some(s)),
                 Err(()) => ProtocolData::SimpleError(Arc::from("GET on a ZSET entry")),
             },
-            Command::Set(args) => match self.set(args) {
-                Ok(s) => ProtocolData::BulkString(s),
-                Err(()) => ProtocolData::SimpleError(Arc::from("SET on a ZSET entry")),
-            },
-            Command::Del { key } => {
-                if self.del(key) {
-                    ProtocolData::Integer(1)
-                } else {
-                    ProtocolData::Integer(0)
+            Command::Set(args) => {
+                let get_old = args.get_old;
+                match self.set(args) {
+                    Ok((s, setted)) => {
+                        if get_old {
+                            ProtocolData::BulkString(s)
+                        } else if setted {
+                            ProtocolData::SimpleString(Arc::from("OK"))
+                        } else {
+                            ProtocolData::BulkString(None)
+                        }
+                    }
+                    Err(()) => ProtocolData::SimpleError(Arc::from("SET on a ZSET entry")),
                 }
             }
+            Command::Del { keys } => ProtocolData::Integer(self.del(keys) as i64),
             Command::Hello => ProtocolData::SimpleString(Arc::from("OK")),
             Command::Keys => {
                 let keys = self.keys();
@@ -72,17 +77,7 @@ impl Store {
                     .collect();
                 ProtocolData::Array(Some(Arc::from(v)))
             }
-            Command::Pexpire { key, expire_ms } => {
-                if self.pexpire(key, *expire_ms) {
-                    ProtocolData::SimpleString(Arc::from("OK"))
-                } else {
-                    ProtocolData::BulkString(None)
-                }
-            }
-            Command::Pttl { key } => match self.pttl(key) {
-                Some(ts) => ProtocolData::Integer(ts as i64),
-                None => ProtocolData::BulkString(None),
-            },
+            Command::Pttl { key } => ProtocolData::Integer(self.pttl(key)),
             Command::Zadd { key, score, name } => {
                 match self.zadd(Arc::clone(key), *score, Arc::clone(name)) {
                     Ok(()) => ProtocolData::SimpleString(Arc::from("OK")),
@@ -127,7 +122,6 @@ impl Store {
                 Ok(None) => ProtocolData::Array(None),
                 Err(()) => ProtocolData::SimpleError(Arc::from("Not a ZSet entry")),
             },
-            _ => ProtocolData::SimpleError(Arc::from("Not implemented")),
         }
     }
 
@@ -155,7 +149,7 @@ impl Store {
         }
     }
 
-    fn set(&self, args: &SetArgs) -> Result<Option<Arc<[u8]>>, ()> {
+    fn set(&self, args: &SetArgs) -> Result<(Option<Arc<[u8]>>, bool), ()> {
         let guard = &epoch::pin();
         let ts = get_time();
         let expire = match args.expire {
@@ -190,26 +184,44 @@ impl Store {
                             None => 0,
                         };
                         eguard.expire = nexpire;
-                        if args.get_old { Ok(Some(r)) } else { Ok(None) }
+                        if args.get_old {
+                            Ok((Some(r), true))
+                        } else {
+                            Ok((None, true))
+                        }
                     } else {
-                        if args.get_old { Ok(Some(r)) } else { Ok(None) }
+                        if args.get_old {
+                            Ok((Some(r), false))
+                        } else {
+                            Ok((None, false))
+                        }
                     }
                 }
             }
         } else {
+            if args.cond == Some(SetCond::XX) {
+                self.map.remove(&args.key, guard);
+                return Ok((None, false));
+            }
             if expire != 0 {
                 self.exp_tx
                     .clone()
                     .send((Arc::clone(&args.key), ts))
                     .expect("Channel should be connected before worker shutdown...");
             }
-            Ok(None)
+            Ok((None, true))
         }
     }
 
-    fn del(&self, key: &Arc<[u8]>) -> bool {
+    fn del(&self, keys: &[Arc<[u8]>]) -> u64 {
         let guard = &epoch::pin();
-        self.map.remove(&key, guard).is_some()
+        keys.iter().fold(0, |acc, k| {
+            if self.map.remove(k, guard).is_some() {
+                acc + 1
+            } else {
+                acc
+            }
+        })
     }
 
     fn keys(&self) -> Vec<Arc<[u8]>> {
@@ -231,38 +243,22 @@ impl Store {
         keys
     }
 
-    fn pexpire(&self, key: &Arc<[u8]>, expire_ms: u64) -> bool {
-        let guard = &epoch::pin();
-        if let Some((_, ent)) = self.map.lookup(key, guard) {
-            let ts = get_time() + expire_ms;
-            let mut eguard = ent.lock().unwrap_or_else(|_| {
-                ent.clear_poison();
-                ent.lock().expect("Mutex poisoned again")
-            });
-            let old_ts = eguard.expire;
-            eguard.expire = ts;
-            if old_ts == 0 {
-                // Send on fresh set to insert into expiry on main thread
-                self.exp_tx
-                    .clone() // Clone on send to not use the same tx for every worker, maybe use TLS instead?
-                    .send((Arc::clone(&key), ts))
-                    .expect("Channel should be connected before worker shutdown...");
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    fn pttl(&self, key: &Arc<[u8]>) -> Option<u64> {
-        self.map.lookup(key, &epoch::pin()).and_then(|(_, ent)| {
-            let eguard = ent.lock().unwrap_or_else(|_| {
-                ent.clear_poison();
-                ent.lock().expect("Mutex poisoned again")
-            });
-            let ts = eguard.expire;
-            if ts == 0 { None } else { Some(ts - get_time()) }
-        })
+    fn pttl(&self, key: &Arc<[u8]>) -> i64 {
+        self.map
+            .lookup(key, &epoch::pin())
+            .map(|(_, ent)| {
+                let eguard = ent.lock().unwrap_or_else(|_| {
+                    ent.clear_poison();
+                    ent.lock().expect("Mutex poisoned again")
+                });
+                let ts = eguard.expire;
+                if ts == 0 {
+                    -1
+                } else {
+                    (ts - get_time()) as i64
+                }
+            })
+            .unwrap_or(-2)
     }
 
     fn zadd(&self, key: Arc<[u8]>, score: f64, name: Arc<[u8]>) -> Result<(), ()> {
@@ -333,7 +329,8 @@ impl Store {
             eref.lock().expect("Mutex poisoned again")
         });
         if let EntryData::ZSet(zs) = eguard.data.as_ref() {
-            Ok(Some(zs.query(score, name, offset, limit)))
+            let v = zs.query(score, name, offset, limit);
+            if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
         } else {
             Err(())
         }

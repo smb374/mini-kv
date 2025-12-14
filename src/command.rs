@@ -1,13 +1,15 @@
 use std::{
     iter::{Cloned, Enumerate},
+    str::FromStr,
     sync::Arc,
 };
 
 use nom::{
     IResult, Input, Parser,
     branch::alt,
-    combinator::{map, map_res},
+    combinator::{map, map_opt, map_res},
     error::{ErrorKind, ParseError},
+    multi::{count, many1},
 };
 
 use crate::proto::ProtocolData;
@@ -106,20 +108,12 @@ pub enum Command {
     Get {
         key: Arc<[u8]>,
     },
-    OldSet {
-        key: Arc<[u8]>,
-        val: Arc<[u8]>,
-    },
     Set(SetArgs),
     Del {
-        key: Arc<[u8]>,
+        keys: Vec<Arc<[u8]>>,
     },
     Keys,
     Hello,
-    Pexpire {
-        key: Arc<[u8]>,
-        expire_ms: u64,
-    },
     Pttl {
         key: Arc<[u8]>,
     },
@@ -161,7 +155,21 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
         return None;
     }
     let tokens = Tokens(&valid_args);
-    alt([parse_get, parse_set]).parse(tokens).ok().map(|x| x.1)
+    let mut cmd = Arc::clone(&valid_args[0]);
+    Arc::make_mut(&mut cmd).make_ascii_uppercase();
+    match cmd.as_ref() {
+        b"GET" => parse_get(tokens).ok().map(|x| x.1),
+        b"SET" => parse_set(tokens).ok().map(|x| x.1),
+        b"DEL" => parse_del(tokens).ok().map(|x| x.1),
+        b"HELLO" => Some(Command::Hello),
+        b"KEYS" => Some(Command::Keys),
+        b"PTTL" => parse_pttl(tokens).ok().map(|x| x.1),
+        b"ZADD" => parse_zadd(tokens).ok().map(|x| x.1),
+        b"ZSCORE" => parse_zscore(tokens).ok().map(|x| x.1),
+        b"ZREM" => parse_zrem(tokens).ok().map(|x| x.1),
+        b"ZQUERY" => parse_zquery(tokens).ok().map(|x| x.1),
+        _ => None,
+    }
 }
 
 fn parse_get(t: Tokens) -> IResult<Tokens, Command> {
@@ -177,26 +185,89 @@ fn parse_set(t: Tokens) -> IResult<Tokens, Command> {
         SetArgs::new(key, val)
     })
     .parse(t)?;
-    if args.cond.is_none() {
-        if let Ok((rest, cond)) = parse_set_cond(left.clone()) {
-            args.cond = Some(cond);
-            left = rest;
+    if left.input_len() > 0 {
+        if args.cond.is_none() {
+            if let Ok((rest, cond)) = parse_set_cond(left.clone()) {
+                args.cond = Some(cond);
+                left = rest;
+            }
         }
-    }
-    if !args.get_old {
-        if let Ok((rest, _)) = parse_get_old(left.clone()) {
-            args.get_old = true;
-            left = rest;
+        if !args.get_old {
+            if let Ok((rest, _)) = parse_get_old(left.clone()) {
+                args.get_old = true;
+                left = rest;
+            }
         }
-    }
-    if args.expire.is_none() {
-        if let Ok((rest, expire)) = parse_expire_arg(left.clone()) {
-            args.expire = Some(expire);
-            left = rest;
+        if args.expire.is_none() {
+            if let Ok((rest, expire)) = parse_expire_arg(left.clone()) {
+                args.expire = Some(expire);
+                left = rest;
+            }
         }
     }
 
     Ok((left, Command::Set(args)))
+}
+
+fn parse_del(t: Tokens) -> IResult<Tokens, Command> {
+    map((token_eq(b"DEL"), many1(any_token)), |(_, v)| {
+        Command::Del { keys: v }
+    })
+    .parse(t)
+}
+
+fn parse_pttl(t: Tokens) -> IResult<Tokens, Command> {
+    map((token_eq(b"PTTL"), any_token), |(_, key)| Command::Pttl {
+        key,
+    })
+    .parse(t)
+}
+
+fn parse_zadd(t: Tokens) -> IResult<Tokens, Command> {
+    map_res(
+        (token_eq(b"ZADD"), any_token, any_token, any_token),
+        |(_, key, s, name)| {
+            f64::from_str(String::from_utf8_lossy(&s).as_ref()).map(|score| Command::Zadd {
+                key,
+                score,
+                name,
+            })
+        },
+    )
+    .parse(t)
+}
+
+fn parse_zscore(t: Tokens) -> IResult<Tokens, Command> {
+    map(
+        (token_eq(b"ZSCORE"), any_token, any_token),
+        |(_, key, name)| Command::Zscore { key, name },
+    )
+    .parse(t)
+}
+
+fn parse_zrem(t: Tokens) -> IResult<Tokens, Command> {
+    map(
+        (token_eq(b"ZREM"), any_token, any_token),
+        |(_, key, name)| Command::Zrem { key, name },
+    )
+    .parse(t)
+}
+
+fn parse_zquery(t: Tokens) -> IResult<Tokens, Command> {
+    map_opt((token_eq(b"ZQUERY"), count(any_token, 5)), |(_, v)| {
+        f64::from_str(String::from_utf8_lossy(&v[1]).as_ref())
+            .ok()
+            .zip(i64::from_str_radix(String::from_utf8_lossy(&v[3]).as_ref(), 10).ok())
+            .zip(usize::from_str_radix(String::from_utf8_lossy(&v[4]).as_ref(), 10).ok())
+            .map(|((score, offset), limit)| Command::Zquery {
+                key: Arc::clone(&v[0]),
+                score,
+                name: Arc::clone(&v[2]),
+                offset,
+                limit,
+            })
+    })
+    .parse(t)
 }
 
 fn parse_set_cond<'a>(input: Tokens<'a>) -> IResult<Tokens<'a>, SetCond> {
