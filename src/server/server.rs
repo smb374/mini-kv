@@ -143,7 +143,7 @@ impl Server {
                 for _ in 0..4096 {
                     match self.listener.accept() {
                         Ok((mut conn, addr)) => {
-                            log::info!("Got connection from {addr}");
+                            log::debug!("Got connection from {addr}");
                             let ent = self.conns.vacant_entry();
                             let key = ent.key();
                             if key >= MAX_TOKENS {
