@@ -4,8 +4,6 @@ A mini KV server in Rust.
 
 This is a port from the C project [smb374/redis-c](https://github.com/smb374/redis-c) to make certain things easier to maintain while keeping minimal dependencies and add RESP2 support. See that repo for most of the details.
 
-For the list of commands supported see the C code repo or go to [Build Your Own Redis](https://build-your-own.org/redis/#table-of-contents) to check it as the project and the C code implements the list of commands from the book.
-
 ## How to run
 
 Run `cargo build --release` and run `target/release/kv_server` to start the
@@ -27,6 +25,16 @@ Usage: kv_server [-h|--help]
 - Multi-thread: Unlike most of the Redis implementation, the connections are dispatched to 4 worker threads
   and the primary storage is done with a concurrent Hopscotch hashmap with XXH3-64 hashing.
 - RESP2 support: The server supports RESP2 protocol so you can use existing clients/CLI with RESP2 to access.
+
+## Commands
+
+| Primary | ZSet   | Other |
+| ------- | ------ | ----- |
+| SET     | ZADD   | KEYS  |
+| GET     | ZSCORE | HELLO |
+| DEL     | ZREM   |       |
+| PEXPIRE | ZQUERY |       |
+| PTTL    |        |       |
 
 ## Dependencies
 
