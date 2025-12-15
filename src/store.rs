@@ -55,13 +55,7 @@ impl Store {
                     ProtocolData::BulkString(None)
                 }
             }
-            Command::Del { key } => {
-                if self.del(key) {
-                    ProtocolData::Integer(1)
-                } else {
-                    ProtocolData::Integer(0)
-                }
-            }
+            Command::Del { keys } => ProtocolData::Integer(self.del(keys) as i64),
             Command::Hello => ProtocolData::SimpleString(Arc::from("OK")),
             Command::Keys => {
                 let keys = self.keys();
@@ -175,9 +169,15 @@ impl Store {
         true
     }
 
-    fn del(&self, key: &Arc<[u8]>) -> bool {
+    fn del(&self, keys: &[Arc<[u8]>]) -> u64 {
         let guard = &epoch::pin();
-        self.map.remove(&key, guard).is_some()
+        keys.iter().fold(0, |acc, k| {
+            if self.map.remove(k, guard).is_some() {
+                acc + 1
+            } else {
+                acc
+            }
+        })
     }
 
     fn keys(&self) -> Vec<Arc<[u8]>> {

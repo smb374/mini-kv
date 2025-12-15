@@ -46,7 +46,7 @@ Usage: kv_server [-h|--help]
 - [log](https://crates.io/crates/log): Logging facade that almost everyone uses in Rust.
 - [mio](https://crates.io/crates/mio): Low-level system IO polling mechanism wrapper for implementing non-blocking IO event loop.
 - [nix](https://crates.io/crates/nix): Only uses `signal` feature to have safe(r) sigaction for graceful shutdown on `SIGINT` & `SIGTERM`.
-- [nom](https://crates.io/crates/nom): Parser combinator library for RESP2 parser.
+- [nom](https://crates.io/crates/nom): Parser combinator library for RESP2 & command parser.
 - [simple_logger](https://crates.io/crates/simple_logger): Simple logger with level filter based on `RUST_LOG`.
 - [slab](https://crates.io/crates/slab): Slab allocator for connection storage.
 - [twox-hash](https://crates.io/crates/twox-hash): Provide XXH3-64 used as hasher for the concurrent hashmap.
