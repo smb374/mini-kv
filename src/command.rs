@@ -67,6 +67,7 @@ impl<'a> nom::Input for Tokens<'a> {
     }
 }
 
+#[derive(Debug)]
 pub enum Command {
     Get {
         key: Arc<[u8]>,
@@ -76,7 +77,7 @@ pub enum Command {
         val: Arc<[u8]>,
     },
     Del {
-        keys: Vec<Arc<[u8]>>,
+        keys: Arc<[Arc<[u8]>]>,
     },
     Keys,
     Hello,
@@ -109,6 +110,22 @@ pub enum Command {
     },
 }
 
+impl Command {
+    pub fn is_write(&self) -> bool {
+        match self {
+            Command::Set { key: _, val: _ }
+            | Command::Del { keys: _ }
+            | Command::Zadd {
+                key: _,
+                score: _,
+                name: _,
+            }
+            | Command::Zrem { key: _, name: _ } => true,
+            _ => false,
+        }
+    }
+}
+
 pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
     let ProtocolData::Array(Some(args)) = dat else {
         return None;
@@ -133,6 +150,7 @@ pub fn parse_command(dat: &ProtocolData) -> Option<Command> {
         b"DEL" => parse_del(tokens).ok().map(|x| x.1),
         b"HELLO" => Some(Command::Hello),
         b"KEYS" => Some(Command::Keys),
+        b"PEXPIRE" => parse_pexpire(tokens).ok().map(|x| x.1),
         b"PTTL" => parse_pttl(tokens).ok().map(|x| x.1),
         b"ZADD" => parse_zadd(tokens).ok().map(|x| x.1),
         b"ZSCORE" => parse_zscore(tokens).ok().map(|x| x.1),
@@ -158,8 +176,25 @@ fn parse_set(t: Tokens) -> IResult<Tokens, Command> {
 
 fn parse_del(t: Tokens) -> IResult<Tokens, Command> {
     map((token_eq(b"DEL"), many1(any_token)), |(_, v)| {
-        Command::Del { keys: v }
+        Command::Del {
+            keys: Arc::from(v.into_boxed_slice()),
+        }
     })
+    .parse(t)
+}
+
+fn parse_pexpire(t: Tokens) -> IResult<Tokens, Command> {
+    map_res(
+        (token_eq(b"PEXPIRE"), any_token, any_token),
+        |(_, key, s_ttl)| {
+            u64::from_str_radix(String::from_utf8_lossy(&s_ttl).as_ref(), 10).map(|ttl| {
+                Command::Pexpire {
+                    key,
+                    expire_ms: ttl,
+                }
+            })
+        },
+    )
     .parse(t)
 }
 

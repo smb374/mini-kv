@@ -1,10 +1,15 @@
 pub mod command;
 pub mod hashtable;
+pub mod persistence;
 pub mod proto;
 pub mod store;
 pub mod zset;
 
-use std::{sync::OnceLock, time::Instant};
+use std::{
+    alloc::{self, Layout},
+    sync::OnceLock,
+    time::Instant,
+};
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
 
@@ -33,4 +38,14 @@ pub fn decode_float(x: [u8; 8]) -> f64 {
         !bits
     };
     f64::from_bits(y)
+}
+
+pub fn alloc_box_buffer(len: usize) -> Box<[u8]> {
+    if len == 0 {
+        return <Box<[u8]>>::default();
+    }
+    let layout = Layout::array::<u8>(len).unwrap();
+    let ptr = unsafe { alloc::alloc_zeroed(layout) };
+    let slice_ptr = core::ptr::slice_from_raw_parts_mut(ptr, len);
+    unsafe { Box::from_raw(slice_ptr) }
 }

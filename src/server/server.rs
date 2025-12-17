@@ -1,33 +1,36 @@
 use std::{
     collections::VecDeque,
     io,
-    net::SocketAddr,
     os::raw::c_int,
     sync::{Arc, Mutex, OnceLock},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
+use bytes::{BufMut, BytesMut};
 use crossbeam::{
     channel::{self, Receiver, Sender},
-    epoch,
+    epoch, select,
 };
 use mini_kv::{
-    command, get_time,
-    proto::{self, ProtocolData},
+    command::{self, parse_command},
+    get_time,
+    persistence::wal::{WALReadError, WALReader, WALType, WALWriter},
+    proto::{self, ProtocolData, parse_protocol},
     store::Store,
 };
 use mio::{Events, Interest, Poll, Token, Waker, event::Event, net::TcpListener};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal};
 use slab::Slab;
 
-use crate::connection::ConnState;
+use crate::{args::ServerArg, connection::ConnState};
 
 const MAX_TOKENS: usize = 0x80000000; // i32 max + 1
 const SERVER_TOKEN: Token = Token(MAX_TOKENS);
 const WAKER_TOKEN: Token = Token(MAX_TOKENS + 1);
 const EVENT_CAPACITY: usize = 65536;
 const CONNECTION_TIMEOUT_MS: u64 = 30000;
+const SNAPSHOT_BYTES_THRES: usize = 10485760;
 
 static WAKER: OnceLock<Waker> = OnceLock::new();
 
@@ -36,8 +39,25 @@ enum Work {
     Shutdown,
 }
 
-struct Worker {
-    tx: Sender<Work>,
+enum PWork {
+    Persist(ProtocolData),
+    Shutdown,
+}
+
+struct WorkerState {
+    store: Arc<Store>,
+    rx: Receiver<Work>,
+    tx: Sender<PWork>,
+}
+
+struct PWorkerState {
+    store: Arc<Store>,
+    rx: Receiver<PWork>,
+    dir: String,
+}
+
+struct Worker<T> {
+    tx: Sender<T>,
     handle: JoinHandle<()>,
 }
 
@@ -51,7 +71,8 @@ pub struct Server {
     listener: TcpListener,
     poll: Poll,
     conns: Slab<Connection>,
-    workers: Vec<Worker>,
+    workers: Vec<Worker<Work>>,
+    pworker: Worker<PWork>,
     next_worker: usize,
     conn_expiry: VecDeque<usize>,
     ent_expiry: VecDeque<(Arc<[u8]>, u64)>,
@@ -60,7 +81,13 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(addr: SocketAddr, nworkers: usize) -> io::Result<Self> {
+    pub fn new(
+        ServerArg {
+            addr,
+            workers: nworkers,
+            data_dir,
+        }: ServerArg,
+    ) -> io::Result<Self> {
         let handler = SigHandler::Handler(shutdown);
         let action = SigAction::new(handler, SaFlags::empty(), SigSet::empty());
         unsafe {
@@ -80,20 +107,37 @@ impl Server {
 
         let mut workers = Vec::with_capacity(nworkers);
         let (exp_tx, exp_rx) = channel::bounded(65536);
+        let (ptx, prx) = channel::unbounded();
         let store = Arc::new(Store::new(exp_tx));
 
         for _ in 0..nworkers {
             let (tx, rx) = channel::bounded(65536);
-            let cstore = Arc::clone(&store);
-            let handle = thread::spawn(move || worker_f(cstore, rx));
+            let state = WorkerState {
+                store: Arc::clone(&store),
+                tx: ptx.clone(),
+                rx,
+            };
+            let handle = thread::spawn(move || worker_f(state));
             workers.push(Worker { tx, handle });
         }
+
+        let pwstate = PWorkerState {
+            dir: data_dir,
+            store: Arc::clone(&store),
+            rx: prx,
+        };
+        let h = thread::spawn(move || {
+            if let Err(e) = pworker_f(pwstate) {
+                log::error!("Error for pworker: {e}");
+            }
+        });
 
         Ok(Self {
             listener,
             poll,
             conns: Slab::with_capacity(4096),
             workers,
+            pworker: Worker { tx: ptx, handle: h },
             next_worker: 0,
             conn_expiry: VecDeque::with_capacity(EVENT_CAPACITY),
             ent_expiry: VecDeque::with_capacity(4096),
@@ -203,11 +247,16 @@ impl Server {
         }
     }
 
-    pub fn cleanup(&mut self) -> io::Result<()> {
+    pub fn cleanup(mut self) -> io::Result<()> {
         for w in self.workers.drain(..) {
             w.tx.send(Work::Shutdown).map_err(io::Error::other)?;
             let _ = w.handle.join();
         }
+        self.pworker
+            .tx
+            .send(PWork::Shutdown)
+            .map_err(io::Error::other)?;
+        let _ = self.pworker.handle.join();
 
         let d = self.conns.drain();
         drop(d);
@@ -300,7 +349,88 @@ impl Server {
     }
 }
 
-fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
+fn pworker_f(PWorkerState { store, rx, dir }: PWorkerState) -> io::Result<()> {
+    // TODO: Install Snapshot
+    let mut writer = if let Ok(mut reader) = WALReader::open(&dir) {
+        let mut buf = BytesMut::with_capacity(4096);
+        loop {
+            match reader.decode_one() {
+                Ok(r) => {
+                    buf.put(r.data);
+                    match r.typ {
+                        WALType::Full | WALType::Last => match parse_protocol(&buf) {
+                            Ok((_, proto)) => {
+                                if let Some(cmd) = parse_command(&proto) {
+                                    if let ProtocolData::SimpleError(err) = store.handle(&cmd) {
+                                        log::error!("Error replaying command: {err}");
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "Failed to parse protocol: Invalid Command, skip log..."
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to parse protocol: {e}, skip log...");
+                            }
+                        },
+                        _ => continue,
+                    }
+                }
+                Err(WALReadError::Io(e)) => {
+                    if e.kind() != io::ErrorKind::UnexpectedEof {
+                        log::error!("Error replaying log: {e}");
+                    } else {
+                        log::debug!("Get to end of WAL log, switch to writer");
+                    }
+                    break;
+                }
+                Err(WALReadError::InvalidType(0)) => {
+                    // Since closing server will write whole unfinished block back in
+                    // we know that a type=0 record is the padding 0 bytes.
+                    log::info!("Replay finished");
+                    break;
+                }
+                Err(e) => {
+                    log::error!("Error replaying log: {e}");
+                    break;
+                }
+            }
+            buf.clear();
+        }
+        reader.into_writer()?
+    } else {
+        WALWriter::open(&dir)?
+    };
+
+    let mut append_sz = 0;
+
+    loop {
+        select! {
+            recv(rx) -> proto => {
+                match proto {
+                    Ok(PWork::Persist(p)) => {
+                        append_sz += writer.append(p)?;
+                    }
+                    Ok(PWork::Shutdown) => break,
+                    Err(e) => return Err(io::Error::other(e)),
+                }
+            }
+            default(Duration::from_mins(1)) => {
+                // TODO: Snapshot
+            }
+        }
+        if append_sz >= SNAPSHOT_BYTES_THRES {
+            // TODO: Snapshot
+        }
+    }
+    writer.flush(true)?;
+    log::info!("Persist worker exit");
+
+    Ok(())
+}
+
+fn worker_f(WorkerState { store, rx, tx }: WorkerState) {
     loop {
         match rx.recv() {
             Ok(Work::HandleConnection((ev, state))) => {
@@ -321,7 +451,7 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
                         drop(s);
                         continue;
                     }
-                    process_reqs(&store, state);
+                    process_reqs(&store, state, &tx);
                 }
                 // Try to write anyways
                 if !state.write_buf.is_empty() {
@@ -341,7 +471,7 @@ fn worker_f(store: Arc<Store>, rx: Receiver<Work>) {
     }
 }
 
-fn process_reqs(store: &Store, state: &mut ConnState) {
+fn process_reqs(store: &Store, state: &mut ConnState, tx: &Sender<PWork>) {
     if !state.read_buf.is_empty() {
         let mut datav: Vec<ProtocolData> = Vec::new();
         loop {
@@ -367,6 +497,10 @@ fn process_reqs(store: &Store, state: &mut ConnState) {
             .into_iter()
             .map(|dat| {
                 if let Some(cmd) = command::parse_command(&dat) {
+                    if cmd.is_write() {
+                        tx.send(PWork::Persist(dat.clone()))
+                            .expect("Channel shouldn't be disconnected...");
+                    }
                     store.handle(&cmd)
                 } else {
                     if let ProtocolData::SimpleError(_) = &dat {

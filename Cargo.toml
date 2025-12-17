@@ -11,6 +11,7 @@ readme = "README.md"
 [dependencies]
 bytes = "^1"
 clap_lex = "^0.7"
+crc32c = "^0"
 crossbeam = "^0.8"
 log = "^0.4"
 mio = { version = "^1.1", features = ["net", "os-poll", "os-ext"] }
@@ -18,6 +19,7 @@ nix = { version = "^0.30", default-features = false, features = ["signal"] }
 nom = "^8"
 simple_logger = {version = "^5", default-features = false, features = ["timestamps"]}
 slab = "^0.4"
+thiserror = "^2"
 twox-hash = { version = "^2.1", default-features = false, features = [
     "std",
     "xxhash3_64",

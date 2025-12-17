@@ -28,7 +28,7 @@ impl fmt::Display for ParseProtocolError {
 
 impl error::Error for ParseProtocolError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ProtocolData {
     SimpleString(Arc<str>),
     SimpleError(Arc<str>),
